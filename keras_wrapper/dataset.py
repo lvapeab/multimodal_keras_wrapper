@@ -765,7 +765,7 @@ class Dataset(object):
             ind_remove = self.ids_inputs.index(id)
             del self.ids_inputs[ind_remove]
             del self.types_inputs[ind_remove]
-            eval('del self.X_'+set_name+'[id]')
+            exec('del self.X_'+set_name+'[id]')
         elif id not in keys_X_set:
             raise Exception('An input with id "'+id+'" does not exist in the Database.')
         if not self.silence:
@@ -903,7 +903,7 @@ class Dataset(object):
             ind_remove = self.ids_outputs.index(id)
             del self.ids_outputs[ind_remove]
             del self.types_outputs[ind_remove]
-            eval('del self.Y_'+set_name+'[id]')
+            exec('del self.Y_'+set_name+'[id]')
         elif id not in keys_Y_set:
             raise Exception('An output with id "'+id+'" does not exist in the Database.')
         if not self.silence:
@@ -3119,8 +3119,11 @@ class Dataset(object):
             for id_out in self.ids_outputs:
                 exec('lengths.append(len(self.Y_'+ set_name +'[id_out]))')
             if lengths[1:] != lengths[:-1]:
-                raise Exception('Inputs and outputs size ('+str(lengths)+') for "' +set_name+ '" set do not match.')
-            
+                raise Exception('Inputs and outputs size '
+                                '('+str(lengths)+') for "'+set_name+ '" set do not match.\n'
+                                                                     '\t Inputs:' + str(self.ids_inputs)+''
+                                                                                                         '\t Outputs:' + str(self.ids_outputs))
+
                 
     def __getNextSamples(self, k, set_name):
         """
