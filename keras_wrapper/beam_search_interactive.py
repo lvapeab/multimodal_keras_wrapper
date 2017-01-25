@@ -606,7 +606,7 @@ class InteractiveBeamSearchSampler:
                         for idx_vars in range(len(prev_outs[n_model])):
                             prev_outs[n_model][idx_vars] = prev_outs[n_model][idx_vars][indices_alive]
             else:  # We are in the middle of two isles
-                raise NotImplementedError, 'Segment-based search is still under development'
+                raise NotImplementedError, 'Segment-based search is still under development!'
                 hyp_trans = [[]] * max_N
                 hyp_costs = [[]] * max_N
                 trans_ = copy.copy(trans)
