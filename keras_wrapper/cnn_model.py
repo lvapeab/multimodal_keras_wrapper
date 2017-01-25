@@ -138,12 +138,12 @@ def loadModel(model_path, update_num, custom_objects=dict(), full_path=False):
         # Load model structure
         logging.info("<<< Loading optimized model... >>>")
         logging.info("\t <<< Loading model_init from " + model_name + "_structure_init.json ... >>>")
-        model_init = model_from_json(open(model_name + '_structure_init.json').read())
+        model_init = model_from_json(open(model_name + '_structure_init.json').read(), custom_objects=custom_objects)
         # Load model weights
         model_init.load_weights(model_name + '_weights_init.h5')
         # Load model structure
         logging.info("\t <<< Loading model_next from " + model_name + "_structure_next.json ... >>>")
-        model_next = model_from_json(open(model_name + '_structure_next.json').read())
+        model_next = model_from_json(open(model_name + '_structure_next.json').read(), custom_objects=custom_objects)
         # Load model weights
         model_next.load_weights(model_name + '_weights_next.h5')
 
@@ -234,7 +234,7 @@ class Model_Wrapper(object):
 
         # Prepare logger
         self.__logger = dict()
-        self.__modes = ['train', 'val']
+        self.__modes = ['train', 'val', 'test']
         self.__data_types = ['iteration', 'loss', 'accuracy', 'accuracy top-5']
 
         # Prepare model
@@ -475,6 +475,8 @@ class Model_Wrapper(object):
             :param batch_size: size of the batch (number of images) applied on each interation by the SGD optimization
             :param lr_decay: number of iterations passed for decreasing the learning rate
             :param lr_gamma: proportion of learning rate kept at each decrease. It can also be a set of rules defined by a list, e.g. lr_gamma = [[3000, 0.9], ..., [None, 0.8]] means 0.9 until iteration 3000, ..., 0.8 until the end.
+            :param patience: number of epochs waiting for a possible performance increase before stopping training
+            :param metric_check: name of the metric checked for early stoppping and LR decrease
 
             ####    Data processing parameters
 
@@ -491,11 +493,16 @@ class Model_Wrapper(object):
 
         # Check input parameters and recover default values if needed
 
-        default_params = {'n_epochs': 1, 'batch_size': 50, 'lr_decay': 1, 'lr_gamma':0.1, 'maxlen':100,
-                          'homogeneous_batches': False, 'epochs_for_save': 1, 'num_iterations_val': None,
+        default_params = {'n_epochs': 1, 'batch_size': 50,
+                          'maxlen':100,  # sequence learning parameters (BeamSearch)
+                          'homogeneous_batches': False,
+                          'epochs_for_save': 1,
+                          'num_iterations_val': None,
                           'n_parallel_loaders': 8, 'normalize': False, 'mean_substraction': True,
                           'data_augmentation': True,'verbose': 1, 'eval_on_sets': ['val'],
-                          'reload_epoch': 0, 'extra_callbacks': [], 'shuffle': True,  'epoch_offset': 0}
+                          'reload_epoch': 0, 'extra_callbacks': [], 'shuffle': True,  'epoch_offset': 0,
+                          'patience': 0, 'metric_check': None,    # early stopping parameters
+                          'lr_decay': None, 'lr_gamma':0.1} # LR decay parameters
 
         params = self.checkParameters(parameters, default_params)
         save_params = copy.copy(params)
@@ -545,13 +552,24 @@ class Model_Wrapper(object):
 
         # Prepare callbacks
         callbacks = []
+        ## Callbacks order:
+
+        # Store dmoel
         callback_store_model = StoreModelWeightsOnEpochEnd(self, saveModel, params['epochs_for_save'])
-        callback_lr_reducer = LearningRateReducerWithEarlyStopping(patience=0,
-                                                                   lr_decay=params['lr_decay'],
-                                                                   reduce_rate=params['lr_gamma'])
         callbacks.append(callback_store_model)
-        callbacks.append(callback_lr_reducer)
+        # Extra callbacks (e.g. evaluation)
         callbacks += params['extra_callbacks']
+
+        # LR reducer
+        if params.get('lr_decay') is not None:
+            callback_lr_reducer = LearningRateReducer(lr_decay=params['lr_decay'], reduce_rate=params['lr_gamma'])
+            callbacks.append(callback_lr_reducer)
+
+        # Early stopper
+        if params.get('metric_check') is not None:
+            callback_early_stop = EarlyStopping(self, patience=params['patience'], metric_check=params['metric_check'])
+            callbacks.append(callback_early_stop)
+
 
         # Prepare data generators
         if params['homogeneous_batches']:
@@ -1752,7 +1770,7 @@ class Model_Wrapper(object):
                                                       verbose=verbose)
                     if verbose > 1:
                         print "After unk_replace:", a_no
-                tmp = ' '.join(a_no[:-1])
+                tmp = ' '.join(a_no)
                 answer_pred.append(tmp)
         else:
             for a_no in flattened_answer_pred:
@@ -1967,20 +1985,36 @@ class Model_Wrapper(object):
         """
         Stores the train and val information for plotting the training progress.
 
-        :param mode: 'train', or 'val'
-        :param data_type: 'iteration', 'loss' or 'accuracy'
+        :param mode: 'train', 'val' or 'test'
+        :param data_type: 'iteration', 'loss', 'accuracy', etc.
         :param value: numerical value taken by the data_type
         """
         if mode not in self.__modes:
             raise Exception('The provided mode "'+ mode +'" is not valid.')
-        if data_type not in self.__data_types:
-            raise Exception('The provided data_type "'+ data_type +'" is not valid.')
+        #if data_type not in self.__data_types:
+        #    raise Exception('The provided data_type "'+ data_type +'" is not valid.')
 
         if mode not in self.__logger:
             self.__logger[mode] = dict()
         if data_type not in self.__logger[mode]:
             self.__logger[mode][data_type] = list()
         self.__logger[mode][data_type].append(value)
+
+
+    def getLog(self, mode, data_type):
+        """
+        Returns the all logged values for a given mode and a given data_type
+
+        :param mode: 'train', 'val' or 'test'
+        :param data_type: 'iteration', 'loss', 'accuracy', etc.
+        :return: list of values logged
+        """
+        if mode not in self.__logger:
+            return [None]
+        elif data_type not in self.__logger[mode]:
+            return [None]
+        else:
+            return self.__logger[mode][data_type]
 
     def plot(self):
         """
@@ -2970,7 +3004,32 @@ class Model_Wrapper(object):
 
     def add_dense_block(self, in_layer, nb_layers, k=12, drop=0.2):
         """
-        Adds a Dense Block.
+        Adds a Dense Block for the transition down path.
+
+        # References
+            Jegou S, Drozdzal M, Vazquez D, Romero A, Bengio Y.
+            The One Hundred Layers Tiramisu: Fully Convolutional DenseNets for Semantic Segmentation.
+            arXiv preprint arXiv:1611.09326. 2016 Nov 28.
+
+        :param in_layer: input layer to the dense block.
+        :param nb_layers: number of dense layers included in the dense block (see self.add_dense_layer() for information about the internal layers).
+        :param k: growth rate. Number of additional feature maps learned at each layer.
+        :param drop: dropout rate.
+        :return: output layer of the dense block
+        """
+        list_outputs = []
+        prev_layer = in_layer
+        for n in range(nb_layers):
+            # Insert dense layer
+            new_layer = self.add_dense_layer(prev_layer, k, drop)
+            list_outputs.append(new_layer)
+            # Merge with previous layer
+            prev_layer = merge([new_layer, prev_layer], mode='concat', concat_axis=1)
+        return merge(list_outputs, mode='concat', concat_axis=1)
+
+    def add_down_dense_block(self, in_layer, nb_layers, k=12, drop=0.2):
+        """
+        Adds a Dense Block for the transition up path.
 
         # References
             Jegou S, Drozdzal M, Vazquez D, Romero A, Bengio Y.
@@ -2990,6 +3049,7 @@ class Model_Wrapper(object):
             # Merge with previous layer
             prev_layer = merge([new_layer, prev_layer], mode='concat', concat_axis=1)
         return prev_layer
+
 
     def add_dense_layer(self, in_layer, k, drop):
         """
@@ -3011,6 +3071,51 @@ class Model_Wrapper(object):
         if drop > 0.0:
             out_layer = Dropout(drop) (out_layer)
         return out_layer
+
+
+    def add_transitiondown_block(self, x, skip_dim,
+                               nb_filters_conv, pool_size,
+                               nb_layers, growth, drop):
+        """
+        Adds a Transition Down Block. Consisting of BN, ReLU, Conv and Dropout, Pooling, Dense Block.
+
+        # References
+            Jegou S, Drozdzal M, Vazquez D, Romero A, Bengio Y.
+            The One Hundred Layers Tiramisu: Fully Convolutional DenseNets for Semantic Segmentation.
+            arXiv preprint arXiv:1611.09326. 2016 Nov 28.
+
+        # Input layers parameters
+        :param x: input layer.
+        :param skip_dim: dimensions of the output skip connection
+
+        # Convolutional layer parameters
+        :param nb_filters_conv: number of convolutional filters to learn.
+        :param pool_size: size of the max pooling operation (2 in reference paper)
+
+        # Dense Block parameters
+        :param nb_layers: number of dense layers included in the dense block (see self.add_dense_layer() for information about the internal layers).
+        :param growth: growth rate. Number of additional feature maps learned at each layer.
+        :param drop: dropout rate.
+
+        :return: [output layer, skip connection name]
+        """
+        # Dense Block
+        x_dense = self.add_dense_block(x, nb_layers, k=growth, drop=drop)  # (growth*nb_layers) feature maps added
+
+        ## Concatenation and skip connection recovery for upsampling path
+        skip = merge([x, x_dense], mode='concat', concat_axis=1, name='down_skip_'+str(skip_dim))
+        #skip = x_dense
+
+        # Transition Down
+        x_out = BatchNormalization()(skip)
+        x_out = Activation('relu')(x_out)
+        x_out = Convolution2D(nb_filters_conv, 1, 1, border_mode='same')(x_out)
+        if drop > 0.0:
+            x_out = Dropout(drop)(x_out)
+        x_out = MaxPooling2D(pool_size=(pool_size,pool_size), name='transitiondown_'+str(skip_dim))(x_out)
+
+        return [x_out, skip]
+
 
     def add_transitionup_block(self, x, skip_conn, skip_conn_shapes,
                                out_dim, nb_filters_deconv,
