@@ -1,9 +1,6 @@
 #!/usr/bin/python
 # -*- coding: latin-1 -*-
 import numpy as np
-import logging
-logger = logging.getLogger(__name__)
-logging.basicConfig(level=logging.DEBUG, format=" %(msecs)d: %(message)s")
 
 
 def parse_input(line, dataset, idx2word):
