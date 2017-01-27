@@ -3,11 +3,16 @@
 import numpy as np
 import copy
 import math
-import logging
 import sys
 import time
 from keras_wrapper.dataset import Data_Batch_Generator
 from keras_wrapper.extra.isles_utils import *
+
+import logging
+logging.basicConfig(level=logging.DEBUG,
+                    format='[%(asctime)s] %(message)s', datefmt='%d/%m/%Y %H:%M:%S')
+logger = logging.getLogger(__name__)
+#logger.setLevel(2)
 
 class BeamSearchEnsemble:
 
@@ -430,8 +435,11 @@ class InteractiveBeamSearchSampler:
         alphas_list = []
         for i, model in enumerate(models):
             if self.optimized_search:
-                [model_probs, next_outs] = model.predict_cond_optimized(X, states_below, params,
-                                                                        ii, prev_out=prev_outs[i])
+                [model_probs, next_outs] = model.predict_cond_optimized(X,
+                                                                        states_below,
+                                                                        params,
+                                                                        ii,
+                                                                        prev_out=prev_outs[i])
                 probs_list.append(model_probs)
                 if params['pos_unk']:
                     alphas_list.append(next_outs[-1][0])  # Shape: (k, n_steps)
@@ -450,7 +458,8 @@ class InteractiveBeamSearchSampler:
         else:
             return probs
 
-    def interactive_beam_search(self, X, params, fixed_words=dict(), max_N=0, isles=list(), eos_id=0, null_sym=2):
+    def interactive_beam_search(self, X, params, fixed_words=dict(), max_N=0, isles=list(), eos_id=0, null_sym=2,
+                                idx2word=dict()):
         """
         Beam search method for Cond models.
         (https://en.wikibooks.org/wiki/Artificial_Intelligence/Search/Heuristic_search/Beam_search)
@@ -493,7 +502,7 @@ class InteractiveBeamSearchSampler:
         hyp_scores = np.zeros(live_k).astype('float32')
 
         if isles is not None:
-            unfixed_isles = filter(lambda x: not is_sublist(x[1], fixed_words.values()), [isle for isle in isles])
+            unfixed_isles = filter(lambda x: not is_sublist(x[1], fixed_words.values()), [segment for segment in isles])
         else:
             unfixed_isles = []
 
@@ -529,23 +538,23 @@ class InteractiveBeamSearchSampler:
 
             if len(unfixed_isles) > 0 or ii < max_fixed_pos:
                 log_probs[:, eos_id] = -np.inf
-            # If the current position is fixed, we fix it.
-            if ii in fixed_words:  # This position is fixed by the user
-                # We fix the word
-                log_probs[:, :] = -np.inf
-                log_probs[:, fixed_words[ii]] = 0.
 
             if len(unfixed_isles) == 0 or ii in fixed_words:  # There are no remaining isles. Regular decoding.
-                cand_scores = np.array(hyp_scores)[:, None] - log_probs
-                cand_flat = cand_scores.flatten()
-                # Find the best options by calling argsort of flatten array
-                ranks_flat = cand_flat.argsort()[:(k-dead_k)]
-
-                # Decypher flatten indices
-                voc_size = probs.shape[1]
-                trans_indices = ranks_flat / voc_size  # index of row
-                word_indices = ranks_flat % voc_size   # index of col
-                costs = cand_flat[ranks_flat]
+                # If word is fixed, we only consider this hypothesis
+                if ii in fixed_words:
+                    trans_indices = range(len(hyp_samples))
+                    word_indices = [fixed_words[ii]]*len(trans_indices)
+                    costs = [0.]*len(trans_indices)
+                else:
+                    # Decypher flatten indices
+                    cand_scores = np.array(hyp_scores)[:, None] - log_probs
+                    cand_flat = cand_scores.flatten()
+                    # Find the best options by calling argsort of flatten array
+                    ranks_flat = cand_flat.argsort()[:(k-dead_k)]
+                    voc_size = probs.shape[1]
+                    trans_indices = ranks_flat / voc_size  # index of row
+                    word_indices = ranks_flat % voc_size   # index of col
+                    costs = cand_flat[ranks_flat]
 
                 # Form a beam for the next iteration
                 new_hyp_samples = []
@@ -553,12 +562,13 @@ class InteractiveBeamSearchSampler:
                 new_hyp_scores = np.zeros(k-dead_k).astype('float32')
                 if params['pos_unk']:
                     new_hyp_alphas = []
-                for idx, [ti, wi] in enumerate(zip(trans_indices, word_indices)):
-                    new_hyp_samples.append(hyp_samples[ti]+[wi])
-                    new_trans_indices.append(ti)
+
+                for idx, [orig_idx, next_word] in enumerate(zip(trans_indices, word_indices)):
+                    new_hyp_samples.append(hyp_samples[orig_idx]+[next_word])
+                    new_trans_indices.append(orig_idx)
                     new_hyp_scores[idx] = copy.copy(costs[idx])
                     if params['pos_unk']:
-                        new_hyp_alphas.append(hyp_alphas[ti]+[alphas[ti]])
+                        new_hyp_alphas.append(hyp_alphas[orig_idx]+[alphas[orig_idx]])
 
                 # check the finished samples
                 new_live_k = 0
@@ -606,41 +616,54 @@ class InteractiveBeamSearchSampler:
                         for idx_vars in range(len(prev_outs[n_model])):
                             prev_outs[n_model][idx_vars] = prev_outs[n_model][idx_vars][indices_alive]
             else:  # We are in the middle of two isles
-                raise NotImplementedError, 'Segment-based search is still under development!'
-                hyp_trans = [[]] * max_N
-                hyp_costs = [[]] * max_N
-                trans_ = copy.copy(trans)
-                costs_ = copy.copy(costs)
-                states_ = [states] * (max_N + 1)
-                n_samples_ = 1
-                for kk in range(max_N):
-                    beam_size = len(trans)
-                    state_below = (np.array(map(lambda t: t[-1], trans_)) if ii + kk > 0
-                                  else np.zeros(beam_size, dtype="int64"))
+                forward_hyp_trans = [[]] * max_N
+                forward_hyp_scores = [[]] * max_N
+                if params['pos_unk']:
+                    forward_alphas = [[]] * max_N
+                forward_state_belows = [[]] * max_N
+                forward_prev_outs = [[]] * max_N
+
+                hyp_samples_ = copy.copy(hyp_samples)
+                hyp_scores_ = copy.copy(hyp_scores)
+                if params['pos_unk']:
+                    hyp_alphas_ = copy.copy(hyp_alphas)
+                n_samples_ = k-dead_k
+                for forward_steps in range(max_N):
 
                     if self.optimized_search:  # use optimized search model if available
-                        [probs, prev_outs, alphas] = self.predict_cond(self.models, X, state_below, params, ii + kk,
+                        [probs, prev_outs, alphas] = self.predict_cond(self.models,
+                                                                       X,
+                                                                       state_below,
+                                                                       params,
+                                                                       ii + forward_steps,
                                                                        prev_outs=prev_outs)
                     else:
-                        probs = self.predict_cond(self.models, X, state_below, params, ii + kk)
+                        probs = self.predict_cond(self.models,
+                                                  X,
+                                                  state_below,
+                                                  params,
+                                                  ii + forward_steps)
                     # total score for every sample is sum of -log of word prb
                     log_probs = np.log(probs)
 
                     # Adjust log probs according to search restrictions
                     log_probs[:, eos_id] = -np.inf
-                    if ii + kk in fixed_words:  # This position is fixed by the user
-                        log_probs[:, :] = -np.inf
-                        log_probs[:, fixed_words[ii + kk]] = 0.
-                    # Find the best options by calling argpartition of flatten array
-                    next_costs = np.array(costs_)[:, None] - log_probs
-                    flat_next_costs = next_costs.flatten()
-                    best_costs_indices = np.argpartition(flat_next_costs.flatten(), n_samples_)[:n_samples_]
 
-                    # Decypher flatten indices
-                    voc_size = log_probs.shape[1]
-                    trans_indices = best_costs_indices / voc_size
-                    word_indices = best_costs_indices % voc_size
-                    costs_ = flat_next_costs[best_costs_indices]
+                    # If word is fixed, we only consider this hypothesis
+                    if ii + forward_steps in fixed_words:
+                        trans_indices = range(n_samples_)
+                        word_indices = [fixed_words[ii + forward_steps]]*len(trans_indices)
+                        costs = [0.]*len(trans_indices)
+                    else:
+                        # Decypher flatten indices
+                        next_costs = np.array(hyp_scores_)[:, None] - log_probs
+                        flat_next_costs = next_costs.flatten()
+                        # Find the best options by calling argsort of flatten array
+                        ranks_flat = flat_next_costs.argsort()[:n_samples_]
+                        voc_size = probs.shape[1]
+                        trans_indices = ranks_flat / voc_size  # index of row
+                        word_indices = ranks_flat % voc_size   # index of col
+                        costs = flat_next_costs[ranks_flat]
 
                     # Form a beam for the next iteration
                     new_hyp_samples = []
@@ -648,37 +671,29 @@ class InteractiveBeamSearchSampler:
                     new_hyp_scores = np.zeros(n_samples_).astype('float32')
                     if params['pos_unk']:
                         new_hyp_alphas = []
-                    for idx, [ti, wi] in enumerate(zip(trans_indices, word_indices)):
-                        new_hyp_samples.append(hyp_samples[ti]+[wi])
-                        new_trans_indices.append(ti)
+                    for idx, [orig_idx, next_word] in enumerate(zip(trans_indices, word_indices)):
+                        new_hyp_samples.append(hyp_samples_[orig_idx]+[next_word])
+                        new_trans_indices.append(orig_idx)
                         new_hyp_scores[idx] = copy.copy(costs[idx])
                         if params['pos_unk']:
-                            new_hyp_alphas.append(hyp_alphas[ti]+[alphas[ti]])
+                            new_hyp_alphas.append(hyp_alphas_[orig_idx]+[alphas[orig_idx]])
 
                     # check the finished samples
                     new_live_k_ = 0
                     hyp_samples_ = []
                     hyp_scores_ = []
                     hyp_alphas_ = []
-                    indices_alive = []
+                    indices_alive_ = []
                     for idx in xrange(len(new_hyp_samples)):
-                        if new_hyp_samples[idx][-1] == 0:  # finished sample
-                            samples.append(new_hyp_samples[idx])
-                            sample_scores.append(new_hyp_scores[idx])
-                            if params['pos_unk']:
-                                sample_alphas.append(new_hyp_alphas[idx])
-                            dead_k += 1
-                        else:
-                            indices_alive.append(new_trans_indices[idx])
+                        if new_hyp_samples[idx][-1] != 0:  # Not finished sample
+                            indices_alive_.append(new_trans_indices[idx])
                             new_live_k_ += 1
                             hyp_samples_.append(new_hyp_samples[idx])
                             hyp_scores_.append(new_hyp_scores[idx])
                             if params['pos_unk']:
                                 hyp_alphas_.append(new_hyp_alphas[idx])
-                    hyp_scores_ = np.array(hyp_scores_)
-                    live_k = new_live_k_
 
-                    state_below = np.asarray(hyp_samples, dtype='int64')
+                    state_below = np.asarray(hyp_samples_, dtype='int64')
                     # we must include an additional dimension if the input for each timestep are all the generated words so far
                     if pad_on_batch:
                         state_below = np.hstack((np.zeros((state_below.shape[0], 1), dtype='int64') + null_sym, state_below))
@@ -690,87 +705,93 @@ class InteractiveBeamSearchSampler:
                                                            max(params['maxlen'] - state_below.shape[1] - 1, 0)),
                                                  dtype='int64')))
 
+
+                    forward_hyp_scores[forward_steps] = hyp_scores_
+                    forward_hyp_trans[forward_steps] = hyp_samples_
+                    if params['pos_unk']:
+                        forward_alphas[forward_steps] = hyp_alphas_
+                    forward_state_belows[forward_steps] = state_below
                     if params['optimized_search'] and ii > 0:
                         for n_model in  range(len(self.models)):
                             # filter next search inputs w.r.t. remaining samples
                             for idx_vars in range(len(prev_outs[n_model])):
-                                prev_outs[n_model][idx_vars] = prev_outs[n_model][idx_vars][indices_alive]
+                                prev_outs[n_model][idx_vars] = prev_outs[n_model][idx_vars][indices_alive_]
+                        forward_prev_outs[forward_steps] = prev_outs
 
-
-                    trans_ = []
-                    costs_ = []
-                    indices_ = []
-                    for i in range(n_samples_):
-                        trans_.append(new_trans[i])
-                        costs_.append(new_costs[i])
-                        indices_.append(i)
-                    states__ = []
-                    for i in xrange(num_models):
-                        states__.append(numpy.asarray(map(lambda x: x[indices_], new_states[i])))
-                    states_[kk + 1] = states__  # numpy.asarray(map(lambda x: x[indices_], new_states))
-                    hyp_costs[kk] = costs_
-                    hyp_trans[kk] = trans_
-                """
-                #TODO: Multiple best hypotheses??
-                """
+                # We get the beam which contains the best hypothesis
                 best_n_words = -1
                 min_cost = np.inf
                 best_hyp = []
-                for n_words in range(len(hyp_costs)):
-                    for beam_index in range(len(hyp_costs[n_words])):
-                        normalized_cost = hyp_costs[n_words][beam_index] / (n_words + 1)
+                for n_words in range(len(forward_hyp_scores)):
+                    for beam_index in range(len(forward_hyp_scores[n_words])):
+                        normalized_cost = forward_hyp_scores[n_words][beam_index] / (n_words + 1)
                         if normalized_cost < min_cost:
                             min_cost = normalized_cost
                             best_n_words = n_words
-                            best_hyp = hyp_trans[n_words][beam_index]
+                            best_hyp = forward_hyp_trans[n_words][beam_index]
+                            best_beam_index = beam_index
+
                 assert best_n_words > -1, "Error in the rescoring approach"
+                prev_hyp = map(lambda x: idx2word.get(x, "UNK"), hyp_samples[0])
 
-                trans = hyp_trans[best_n_words]
-                costs = hyp_costs[best_n_words]
+                hyp_samples = [forward_hyp_trans[best_n_words][best_beam_index]]*n_samples_
+                hyp_scores = [forward_hyp_scores[best_n_words][best_beam_index]]*n_samples_
+                if params['pos_unk']:
+                    hyp_alphas = [forward_alphas[best_n_words][best_beam_index]] *n_samples_
 
-                #trans = [best_hyp]*n_samples #hyp_trans[best_n_words]
-                #costs = [min_cost]*n_samples #hyp_costs[best_n_words]
-                states = states_[best_n_words + 1]
+                state_below = np.asarray([forward_state_belows[best_n_words][best_beam_index]]*n_samples_)
+                prev_outs = [forward_prev_outs[best_n_words][best_beam_index]]*n_samples_
                 best_n_words += 1
-                logger.log(2, "Generating %d words from position %d" % (best_n_words, ii))
-                # We fix the words of the next isle
+                #logger.log(2, "Generating %d words from position %d" % (best_n_words, ii))
+
+                # We fix the words of the next segment
                 stop = False
+                #logger.log(2, "\t Hypotheses in beam:%s" % str([[(idx2word.get(hyp[i],"UNK"), i) for i in range(len(hyp))] for hyp in hyp_samples]))
+
                 while not stop and len(unfixed_isles) > 0:
                     ii_counter = ii + best_n_words
                     next_isle = unfixed_isles[0][1]
                     isle_prefixes = [next_isle[:i + 1] for i in range(len(next_isle))]
-                    hyp = map(lambda x: idx2word[x] if idx2word.get(x) is not None else "UNK", best_hyp)
-                    logger.log(2, "Hypothesis:%s" % str([(hyp[i], i) for i in range(len(hyp))]))
-                    logger.log(2, "Isle: %s\n" % str(
-                        map(lambda x: idx2word[x] if idx2word.get(x) is not None else "UNK", next_isle)))
+                    hyp = map(lambda x: idx2word.get(x, "UNK"), best_hyp)
                     _, start_pos = subfinder(next_isle, best_hyp)
-                    if start_pos > -1:  # Isle completely included in the partial hypothesis
+
+                    logger.log(2, "Previous best hypothesis in beam:%s" % str([(prev_hyp[i], i) for i in range(len(prev_hyp))]))
+                    logger.log(2, "Best hypothesis in beam:%s" % str([(hyp[i], i) for i in range(len(hyp))]))
+                    logger.log(2, "Segment: %s\n" % str(map(lambda x: idx2word.get(x, "UNK"), next_isle)))
+
+                    # Detect the case of the following segment
+                    if start_pos > -1:  # Segment completely included in the partial hypothesis
                         ii_counter = start_pos
-                        logger.log(2, "Isle included in hypothesis (position %d)" % ii_counter)
+                        logger.log(2, "Segment included in hypothesis (position %d)" % ii_counter)
                     else:
                         for i in range(len(best_hyp)):
                             if any(map(lambda x: x == best_hyp[i:], isle_prefixes)):
-                                # Isle overlaps with the hypothesis: Remove isle
+                                # Segment overlaps with the hypothesis: Remove segment
                                 ii_counter = i
                                 stop = True
-                                logger.log(2, "Isle overlapped (position %d)" % ii_counter)
+                                logger.log(2, "Segment overlapped (position %d)" % ii_counter)
                                 break
+
                     if ii_counter == ii + best_n_words:
-                        logger.log(2, "Isle not included nor overlapped")
+                        #  Segment not included nor overlapped. We should put the segment after the partial hypothesis
+                        logger.log(2, "Segment not included nor overlapped")
                         stop = True
+                    # Apply the action corresponding to the case.0
                     for word in next_isle:
                         if fixed_words.get(ii_counter) is None:
                             fixed_words[ii_counter] = word
                             logger.log(2, "\t > Word %s (%d) will go to position %d" % (
-                                idx2word[word] if idx2word.get(word) is not None else "UNK", word, ii_counter))
+                                idx2word.get(word, "UNK"), word, ii_counter))
                         else:
                             logger.log(2, "\t > Can't put word %s (%d) in position %d because it is in fixed_words" % (
-                                idx2word[word] if idx2word.get(word) is not None else "UNK", word, ii_counter))
+                                idx2word.get(word, "UNK"), word, ii_counter))
                         ii_counter += 1
+                    ii_counter += 1
                     del unfixed_isles[0]
                     #break #TODO: Juntar tantas islas como pueda? o solo una?
                 ii += best_n_words - 1
             ii += 1
+
 
         # dump every remaining one
         if live_k > 0:
@@ -784,7 +805,7 @@ class InteractiveBeamSearchSampler:
         else:
             return samples, sample_scores, None
 
-    def sample_beam_search(self, src_sentence, fixed_words=dict(), max_N=0, isles=list()):
+    def sample_beam_search(self, src_sentence, fixed_words=dict(), max_N=0, isles=list(), idx2word=dict()):
         """
 
         :param src_sentence:
@@ -836,7 +857,8 @@ class InteractiveBeamSearchSampler:
                                                                fixed_words=fixed_words,
                                                                max_N=max_N,
                                                                isles=isles,
-                                                               null_sym=self.dataset.extra_words['<null>'])
+                                                               null_sym=self.dataset.extra_words['<null>'],
+                                                               idx2word=idx2word)
         if params['normalize']:
             counts = [len(sample)**params['alpha_factor'] for sample in samples]
             scores = [co / cn for co, cn in zip(scores, counts)]
