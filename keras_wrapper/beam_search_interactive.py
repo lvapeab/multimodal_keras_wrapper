@@ -12,7 +12,7 @@ import logging
 logging.basicConfig(level=logging.DEBUG,
                     format='[%(asctime)s] %(message)s', datefmt='%d/%m/%Y %H:%M:%S')
 logger = logging.getLogger(__name__)
-#logger.setLevel(2)
+#logger.setLevel(4)
 
 class BeamSearchEnsemble:
 
@@ -398,6 +398,7 @@ class BeamSearchEnsemble:
 
         return params
 
+
 class InteractiveBeamSearchSampler:
 
     def __init__(self, models, dataset, params_prediction, verbose=0):
@@ -484,9 +485,13 @@ class InteractiveBeamSearchSampler:
             3.5. Build new inputs (state_below) and go to 1.
 
         4. return final_samples, final_scores
-
         :param X: Model inputs
         :param params: Search parameters
+        :param fixed_words:
+        :param max_N:
+        :param isles:
+        :param eos_id:
+        :param idx2word:
         :param null_sym: <null> symbol
         :return: UNSORTED list of [k_best_samples, k_best_scores] (k: beam size)
         """
@@ -494,7 +499,6 @@ class InteractiveBeamSearchSampler:
         ii = 0
         samples = []
         sample_scores = []
-        num_models = len(self.models)
         pad_on_batch = params['pad_on_batch']
         dead_k = 0  # samples that reached eos
         live_k = 1  # samples that did not yet reached eos
@@ -502,7 +506,17 @@ class InteractiveBeamSearchSampler:
         hyp_scores = np.zeros(live_k).astype('float32')
 
         if isles is not None:
-            unfixed_isles = filter(lambda x: not is_sublist(x[1], fixed_words.values()), [segment for segment in isles])
+            #unfixed_isles = filter(lambda x: not is_sublist(x[1], fixed_words.values()), [segment for segment in isles])
+            fixed_words_v = copy.copy(fixed_words.values())
+            unfixed_isles = []
+            for segment in isles:
+                if is_sublist(segment[1], fixed_words_v):
+                    s, starting_pos = subfinder(segment[1], fixed_words_v)
+                    for i in range(len(s)):
+                        del fixed_words_v[starting_pos]
+                else:
+                    unfixed_isles.append(segment)
+            logger.debug('Unfixed isles: ' + str(unfixed_isles))
         else:
             unfixed_isles = []
 
@@ -515,6 +529,12 @@ class InteractiveBeamSearchSampler:
         prev_outs = [None] * len(self.models)
         while ii < params['maxlen']:
             # for every possible live sample calc prob for every possible label
+            logger.log(2, "hyp_samples" + str(hyp_samples))
+            logger.log(2, "hyp_scores" + str(hyp_scores))
+            logger.log(3, "ii: %d, fixed_words= %s"%(ii, str(fixed_words)))
+            logger.log(3, 'Current beam:' + str(['<<< Hypo ' + str(i) + ': ' +
+                                                 str(map(lambda word: idx2word.get(word, "UNK"), hyp)) +
+                                                 ' >>>' for (i, hyp) in enumerate (hyp_samples)]))
             if self.optimized_search:  # use optimized search model if available
                 [probs, prev_outs, alphas] = self.predict_cond(self.models,
                                                                X,
@@ -599,19 +619,18 @@ class InteractiveBeamSearchSampler:
                     break
                 state_below = np.asarray(hyp_samples, dtype='int64')
 
-                # we must include an additional dimension if the input for each timestep are all the generated words so far
                 if pad_on_batch:
-                    state_below = np.hstack((np.zeros((state_below.shape[0], 1), dtype='int64') + null_sym, state_below))
-                    if params['words_so_far']:
-                        state_below = np.expand_dims(state_below, axis=0)
+                    state_below = np.hstack((np.zeros((state_below.shape[0], 1), dtype='int64') + null_sym,
+                                             state_below))
                 else:
-                    state_below = np.hstack((np.zeros((state_below.shape[0], 1), dtype='int64'), state_below,
+                    state_below = np.hstack((np.zeros((state_below.shape[0], 1), dtype='int64'),
+                                             state_below,
                                              np.zeros((state_below.shape[0],
                                                        max(params['maxlen'] - state_below.shape[1] - 1, 0)),
                                              dtype='int64')))
 
                 if params['optimized_search'] and ii > 0:
-                    for n_model in  range(len(self.models)):
+                    for n_model in range(len(self.models)):
                         # filter next search inputs w.r.t. remaining samples
                         for idx_vars in range(len(prev_outs[n_model])):
                             prev_outs[n_model][idx_vars] = prev_outs[n_model][idx_vars][indices_alive]
@@ -622,6 +641,7 @@ class InteractiveBeamSearchSampler:
                     forward_alphas = [[]] * max_N
                 forward_state_belows = [[]] * max_N
                 forward_prev_outs = [[]] * max_N
+                forward_indices_alive = [[]] * max_N
 
                 hyp_samples_ = copy.copy(hyp_samples)
                 hyp_scores_ = copy.copy(hyp_scores)
@@ -629,7 +649,6 @@ class InteractiveBeamSearchSampler:
                     hyp_alphas_ = copy.copy(hyp_alphas)
                 n_samples_ = k-dead_k
                 for forward_steps in range(max_N):
-
                     if self.optimized_search:  # use optimized search model if available
                         [probs, prev_outs, alphas] = self.predict_cond(self.models,
                                                                        X,
@@ -694,29 +713,28 @@ class InteractiveBeamSearchSampler:
                                 hyp_alphas_.append(new_hyp_alphas[idx])
 
                     state_below = np.asarray(hyp_samples_, dtype='int64')
-                    # we must include an additional dimension if the input for each timestep are all the generated words so far
                     if pad_on_batch:
-                        state_below = np.hstack((np.zeros((state_below.shape[0], 1), dtype='int64') + null_sym, state_below))
-                        if params['words_so_far']:
-                            state_below = np.expand_dims(state_below, axis=0)
+                        state_below = np.hstack((np.zeros((state_below.shape[0], 1), dtype='int64') + null_sym,
+                                                 state_below))
                     else:
                         state_below = np.hstack((np.zeros((state_below.shape[0], 1), dtype='int64'), state_below,
                                                  np.zeros((state_below.shape[0],
                                                            max(params['maxlen'] - state_below.shape[1] - 1, 0)),
                                                  dtype='int64')))
-
-
+                    forward_indices_alive[forward_steps] = indices_alive_
                     forward_hyp_scores[forward_steps] = hyp_scores_
                     forward_hyp_trans[forward_steps] = hyp_samples_
                     if params['pos_unk']:
                         forward_alphas[forward_steps] = hyp_alphas_
                     forward_state_belows[forward_steps] = state_below
+                    forward_prev_outs[forward_steps] = prev_outs
                     if params['optimized_search'] and ii > 0:
-                        for n_model in  range(len(self.models)):
+                        for n_model in range(len(self.models)):
                             # filter next search inputs w.r.t. remaining samples
                             for idx_vars in range(len(prev_outs[n_model])):
                                 prev_outs[n_model][idx_vars] = prev_outs[n_model][idx_vars][indices_alive_]
-                        forward_prev_outs[forward_steps] = prev_outs
+                    else:
+                        prev_outs = [None] * len(self.models)
 
                 # We get the beam which contains the best hypothesis
                 best_n_words = -1
@@ -734,65 +752,184 @@ class InteractiveBeamSearchSampler:
                 assert best_n_words > -1, "Error in the rescoring approach"
                 prev_hyp = map(lambda x: idx2word.get(x, "UNK"), hyp_samples[0])
 
-                hyp_samples = [forward_hyp_trans[best_n_words][best_beam_index]]*n_samples_
-                hyp_scores = [forward_hyp_scores[best_n_words][best_beam_index]]*n_samples_
-                if params['pos_unk']:
-                    hyp_alphas = [forward_alphas[best_n_words][best_beam_index]] *n_samples_
-
-                state_below = np.asarray([forward_state_belows[best_n_words][best_beam_index]]*n_samples_)
-                prev_outs = [forward_prev_outs[best_n_words][best_beam_index]]*n_samples_
-                best_n_words += 1
-                #logger.log(2, "Generating %d words from position %d" % (best_n_words, ii))
-
                 # We fix the words of the next segment
                 stop = False
-                #logger.log(2, "\t Hypotheses in beam:%s" % str([[(idx2word.get(hyp[i],"UNK"), i) for i in range(len(hyp))] for hyp in hyp_samples]))
+                best_n_words_index = best_n_words
+                logger.log(3, "Generating %d words from position %d" % (best_n_words, ii))
+                best_n_words += 1
 
                 while not stop and len(unfixed_isles) > 0:
+                    overlapping_position = -1
                     ii_counter = ii + best_n_words
                     next_isle = unfixed_isles[0][1]
                     isle_prefixes = [next_isle[:i + 1] for i in range(len(next_isle))]
                     hyp = map(lambda x: idx2word.get(x, "UNK"), best_hyp)
-                    _, start_pos = subfinder(next_isle, best_hyp)
+                    _, start_pos = subfinder(next_isle, best_hyp[-len(next_isle):])
+                    if start_pos > -1: # If the segment is not completely included in the partial hypothesis
+                        start_pos = len(best_hyp) - len(next_isle) + start_pos  # We get its absolute index value
 
-                    logger.log(2, "Previous best hypothesis in beam:%s" % str([(prev_hyp[i], i) for i in range(len(prev_hyp))]))
-                    logger.log(2, "Best hypothesis in beam:%s" % str([(hyp[i], i) for i in range(len(hyp))]))
-                    logger.log(2, "Segment: %s\n" % str(map(lambda x: idx2word.get(x, "UNK"), next_isle)))
+                    logger.log(2, "Previous best hypothesis:%s" % str([(prev_hyp[i], i) for i in range(len(prev_hyp))]))
+                    logger.log(4, "Best hypothesis in beam:%s" % str([(hyp[i], i) for i in range(len(hyp))]))
+                    logger.log(4, "Current segment: %s\n" % str(map(lambda x: idx2word.get(x, "UNK"), next_isle)))
+                    logger.log(4, "Checked against: %s\n" % str(map(lambda x: idx2word.get(x, "UNK"), best_hyp[-len(next_isle):])))
+                    logger.log(4, "Start_pos: %s\n" % str(start_pos))
 
+                    case = 0
                     # Detect the case of the following segment
                     if start_pos > -1:  # Segment completely included in the partial hypothesis
                         ii_counter = start_pos
-                        logger.log(2, "Segment included in hypothesis (position %d)" % ii_counter)
+                        case = 1
+                        logger.log(4, "Detected case 1: Segment included in hypothesis (position %d)" % ii_counter)
                     else:
                         for i in range(len(best_hyp)):
                             if any(map(lambda x: x == best_hyp[i:], isle_prefixes)):
                                 # Segment overlaps with the hypothesis: Remove segment
                                 ii_counter = i
+                                overlapping_position = i
                                 stop = True
-                                logger.log(2, "Segment overlapped (position %d)" % ii_counter)
+                                case = 2
+                                logger.log(4, "Detected case 2: Segment overlapped (position %d)" % ii_counter)
                                 break
 
                     if ii_counter == ii + best_n_words:
                         #  Segment not included nor overlapped. We should put the segment after the partial hypothesis
-                        logger.log(2, "Segment not included nor overlapped")
+                        logger.log(4, "Detected case 0: Segment not included nor overlapped")
+                        case = 0
                         stop = True
-                    # Apply the action corresponding to the case.0
+                        #ii_counter -= 1
+
+                    # Form a beam with those hypotheses compatible with best_hyp
+                    if case == 0:
+                        # The segment is not included in the predicted sequence. Fix the segment next to the current beam
+                        logger.log(3, "Treating case 0. The segment is not included in the predicted sequence. "
+                                      "Fix the segment next to the current beam")
+                        hyp_samples = []
+                        hyp_scores = []
+                        if params['pos_unk']:
+                            hyp_alphas = []
+                        state_below = []
+                        prev_outs = [[]] * len(self.models)
+                        forward_indices_compatible = []
+                        beam_index = 0
+                        for beam_index in range(len(forward_hyp_trans[best_n_words_index])):
+                            incompatible = False
+                            logger.log(2,  "Beam_index:" + str(beam_index))
+                            for future_ii in range(len(forward_hyp_trans[best_n_words_index][beam_index])):
+                                logger.log(2,  "Checking index " +str(future_ii))
+                                logger.log(2,  "From hypothesis " +str(forward_hyp_trans[best_n_words_index][beam_index]))
+                                if fixed_words.get(future_ii) is not None and fixed_words[future_ii] != forward_hyp_trans[best_n_words_index][beam_index][future_ii]:
+                                    incompatible = True
+                                    logger.log(2,  "Incompatible!")
+
+                            if not incompatible:
+                                forward_indices_compatible.append(beam_index)
+                                hyp_samples.append(forward_hyp_trans[best_n_words_index][beam_index])
+                                hyp_scores.append(forward_hyp_scores[best_n_words_index][beam_index])
+                                if params['pos_unk']:
+                                    hyp_alphas.append(forward_alphas[best_n_words_index][beam_index])
+                                state_below.append(forward_state_belows[best_n_words_index][beam_index])
+                        logger.log(3,  "forward_indices_compatible" +str(forward_indices_compatible))
+                        for n_model in range(len(self.models)):
+                            prev_outs[n_model] = [[]] * len(forward_prev_outs[best_n_words_index][n_model])
+                            # filter next search inputs w.r.t. remaining samples
+                            for idx_vars in range(len(forward_prev_outs[best_n_words_index][n_model])):
+                                prev_outs[n_model][idx_vars] = forward_prev_outs[best_n_words_index][n_model][idx_vars][forward_indices_compatible]
+                        if len(forward_indices_compatible) == 0:
+                            hyp_samples = forward_hyp_trans[best_n_words_index]
+                            hyp_scores = forward_hyp_scores[best_n_words_index]
+                            if params['pos_unk']:
+                                hyp_alphas = forward_alphas[best_n_words_index]
+                            state_below = forward_state_belows[best_n_words_index]
+                            prev_outs = forward_prev_outs[best_n_words_index]
+                        state_below = np.array(state_below)
+
+                    if case == 1:
+                        #  The segment is included in the hypothesis
+                        logger.log(3, "Treating case 1: The segment is included in the hypothesis")
+                        logger.log(3, "best_n_words:" + str(best_n_words))
+                        logger.log(3, "len(forward_hyp_trans):" + str(len(forward_hyp_trans)))
+
+                        hyp_samples = []
+                        hyp_scores = []
+                        if params['pos_unk']:
+                            hyp_alphas = []
+                        state_below = []
+                        prev_outs = [[]] * len(self.models)
+                        forward_indices_compatible = []
+                        for beam_index in range(len(forward_hyp_trans[best_n_words_index])):
+                            _, start_pos = subfinder(next_isle, forward_hyp_trans[best_n_words_index][beam_index])
+                            if start_pos  > -1:
+                                # Compatible with best hypothesis
+                                logger.log(3, "Best Hypo: ")
+                                logger.log(3, "%s" % str([(hyp[i], i) for i in range(len(forward_hyp_trans[best_n_words_index][best_n_words_index]))]))
+                                logger.log(3, "compatible with")
+                                logger.log(3, "%s" % str([(hyp[i], i) for i in range(len(forward_hyp_trans[best_n_words_index][beam_index]))]))
+                                logger.log(3, "(Adding %s words)" % str(best_n_words_index))
+                                hyp_samples.append(forward_hyp_trans[best_n_words_index][beam_index])
+                                hyp_scores.append(forward_hyp_scores[best_n_words_index][beam_index])
+                                forward_indices_compatible.append(forward_indices_alive[best_n_words_index][beam_index])
+                                if params['pos_unk']:
+                                    hyp_alphas.append(forward_alphas[best_n_words_index][beam_index])
+                                state_below.append(forward_state_belows[best_n_words_index][beam_index])
+                        state_below = np.array(state_below)
+                        logger.log(2,  "forward_indices_compatible" +str(forward_indices_compatible))
+                        for n_model in range(len(self.models)):
+                            prev_outs[n_model] = [[]] * len(forward_prev_outs[best_n_words_index][n_model])
+                            # filter next search inputs w.r.t. remaining samples
+                            for idx_vars in range(len(forward_prev_outs[best_n_words_index][n_model])):
+                                prev_outs[n_model][idx_vars] = forward_prev_outs[best_n_words_index][n_model][idx_vars][forward_indices_compatible]
+                    if case == 2:
+                        #  The segment is overlapped with the hypothesis
+                        logger.log(3, "Treating case 2: The segment is overlapped with the hypothesis")
+                        assert overlapping_position > -1, 'Error detecting overlapped position!'
+                        hyp_samples = []
+                        hyp_scores = []
+                        if params['pos_unk']:
+                            hyp_alphas = []
+                        state_below = []
+                        prev_outs = [[]] * len(self.models)
+                        forward_indices_compatible = []
+
+                        for beam_index in range(len(forward_hyp_trans[best_n_words_index])):
+                            if any(map(lambda x: x == forward_hyp_trans[best_n_words_index][beam_index][overlapping_position:],
+                                                      isle_prefixes)):
+                                # Compatible with best hypothesis
+                                hyp_samples.append(forward_hyp_trans[best_n_words_index][beam_index])
+                                hyp_scores.append(forward_hyp_scores[best_n_words_index][beam_index])
+                                forward_indices_compatible.append(forward_indices_alive[best_n_words_index][beam_index])
+                                logger.log(3, "Best Hypo: ")
+                                logger.log(3, "%s" % str([(hyp[i], i) for i in range(len(forward_hyp_trans[best_n_words_index][best_n_words_index]))]))
+                                logger.log(3, "compatible with")
+                                logger.log(3, "%s" % str([(hyp[i], i) for i in range(len(forward_hyp_trans[best_n_words_index][beam_index]))]))
+                                logger.log(3, "(Adding %s words)" % str(best_n_words_index))
+                                if params['pos_unk']:
+                                    hyp_alphas.append(forward_alphas[best_n_words_index][beam_index])
+                                state_below.append(forward_state_belows[best_n_words_index][beam_index])
+                        state_below = np.array(state_below)
+                        logger.log(2,  "forward_indices_compatible" +str(forward_indices_compatible))
+                        for n_model in range(len(self.models)):
+                            prev_outs[n_model] = [[]] * len(forward_prev_outs[best_n_words_index][n_model])
+                            # filter next search inputs w.r.t. remaining samples
+                            for idx_vars in range(len(forward_prev_outs[best_n_words_index][n_model])):
+                                prev_outs[n_model][idx_vars] = forward_prev_outs[best_n_words_index][n_model][idx_vars][forward_indices_compatible]
+
                     for word in next_isle:
                         if fixed_words.get(ii_counter) is None:
                             fixed_words[ii_counter] = word
-                            logger.log(2, "\t > Word %s (%d) will go to position %d" % (
+                            logger.log(4, "\t > Word %s (%d) will go to position %d" % (
                                 idx2word.get(word, "UNK"), word, ii_counter))
                         else:
-                            logger.log(2, "\t > Can't put word %s (%d) in position %d because it is in fixed_words" % (
+                            logger.log(4, "\t > Can't put word %s (%d) in position %d because it is in fixed_words" % (
                                 idx2word.get(word, "UNK"), word, ii_counter))
                         ii_counter += 1
-                    ii_counter += 1
                     del unfixed_isles[0]
-                    #break #TODO: Juntar tantas islas como pueda? o solo una?
+                    logger.log(3, "\t Stop: >"+str(stop))
+
+                logger.log(4, 'After looking into the future:' + str(['<<< Hypo ' + str(i) + ': ' +
+                                 str(map(lambda word: idx2word.get(word, "UNK"), hyp)) +
+                                 ' >>>' for (i, hyp) in enumerate (hyp_samples)]))
                 ii += best_n_words - 1
             ii += 1
-
-
         # dump every remaining one
         if live_k > 0:
             for idx in xrange(live_k):
@@ -831,22 +968,14 @@ class InteractiveBeamSearchSampler:
                           'mapping': None
                           }
         params = self.checkParameters(self.params, default_params)
-        predictions = dict()
         params['pad_on_batch'] = self.dataset.pad_on_batch[params['dataset_inputs'][-1]]
         params['n_samples'] = 1
         n_samples = params['n_samples']
-        num_iterations = int(math.ceil(float(n_samples)/params['batch_size']))
         # Prepare data generator: We won't use an Homogeneous_Data_Batch_Generator here
         if params['pos_unk']:
             best_alphas = []
-            sources = []
 
-        total_cost = 0
-        sampled = 0
-        start_time = time.time()
-        eta = -1
         X = dict()
-        s_dict = {}
         for input_id in params['model_inputs']:
             X[input_id] = src_sentence
         x = dict()
@@ -869,7 +998,7 @@ class InteractiveBeamSearchSampler:
             else:
                 best_alphas = None
 
-        return (np.asarray(best_sample), best_score, np.asarray(best_alphas))
+        return np.asarray(best_sample), best_score, np.asarray(best_alphas)
 
     @staticmethod
     def checkParameters(input_params, default_params):
