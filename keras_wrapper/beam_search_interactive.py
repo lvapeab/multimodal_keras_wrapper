@@ -12,7 +12,7 @@ import logging
 logging.basicConfig(level=logging.DEBUG,
                     format='[%(asctime)s] %(message)s', datefmt='%d/%m/%Y %H:%M:%S')
 logger = logging.getLogger(__name__)
-#logger.setLevel(4)
+#logger.setLevel(2)
 
 class BeamSearchEnsemble:
 
@@ -516,7 +516,7 @@ class InteractiveBeamSearchSampler:
                         del fixed_words_v[starting_pos]
                 else:
                     unfixed_isles.append(segment)
-            logger.debug('Unfixed isles: ' + str(unfixed_isles))
+            logger.log(3, 'Unfixed isles: ' + str(unfixed_isles))
         else:
             unfixed_isles = []
 
@@ -564,7 +564,8 @@ class InteractiveBeamSearchSampler:
                 if ii in fixed_words:
                     trans_indices = range(len(hyp_samples))
                     word_indices = [fixed_words[ii]]*len(trans_indices)
-                    costs = [0.]*len(trans_indices)
+                    costs = np.array(hyp_scores)
+
                 else:
                     # Decypher flatten indices
                     cand_scores = np.array(hyp_scores)[:, None] - log_probs
@@ -672,7 +673,7 @@ class InteractiveBeamSearchSampler:
                     if ii + forward_steps in fixed_words:
                         trans_indices = range(n_samples_)
                         word_indices = [fixed_words[ii + forward_steps]]*len(trans_indices)
-                        costs = [0.]*len(trans_indices)
+                        costs = np.array(hyp_scores_)
                     else:
                         # Decypher flatten indices
                         next_costs = np.array(hyp_scores_)[:, None] - log_probs
