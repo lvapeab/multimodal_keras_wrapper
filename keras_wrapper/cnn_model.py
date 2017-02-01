@@ -1,6 +1,6 @@
 import matplotlib as mpl
 from keras.engine.training import Model
-from keras.layers import Convolution2D, MaxPooling2D, ZeroPadding2D, AveragePooling2D, Deconvolution2D
+from keras.layers import Convolution2D, MaxPooling2D, ZeroPadding2D, AveragePooling2D, Deconvolution2D, ArbitraryDeconvolution2D
 from keras.layers import merge, Dense, Dropout, Flatten, Input, Activation, BatchNormalization
 from keras.layers.advanced_activations import PReLU
 from keras.models import Sequential, model_from_json
@@ -8,6 +8,7 @@ from keras.optimizers import SGD
 from keras.regularizers import l2
 from keras.utils import np_utils
 from keras.utils.layer_utils import print_summary
+from keras import backend as K
 
 from keras_wrapper.dataset import Data_Batch_Generator, Homogeneous_Data_Batch_Generator
 from keras_wrapper.deprecated.thread_loader import ThreadDataLoader, retrieveXY
@@ -155,6 +156,10 @@ def loadModel(model_path, update_num, custom_objects=dict(), full_path=False):
             model_wrapper = pk.load(open(model_name + '_CNN_Model.pkl', 'rb'))
         except:
             raise Exception(ValueError)
+
+    # Add logger for backwards compatibility (old pre-trained models) if it does not exist
+    model_wrapper.updateLogger()
+
     model_wrapper.model = model
     if loaded_optimized:
         model_wrapper.model_init = model_init
@@ -233,9 +238,7 @@ class Model_Wrapper(object):
         self.matchings_next_to_next = None
 
         # Prepare logger
-        self.__logger = dict()
-        self.__modes = ['train', 'val', 'test']
-        self.__data_types = ['iteration', 'loss', 'accuracy', 'accuracy top-5']
+        self.updateLogger()
 
         # Prepare model
         if not inheritance:
@@ -262,6 +265,23 @@ class Model_Wrapper(object):
                 if not self.silence:
                     logging.info("<<< Loading weights from file "+ weights_path +" >>>")
                 self.model.load_weights(weights_path, seq_to_functional=seq_to_functional)
+
+    def updateLogger(self):
+        """
+            Checks if the model contains an updated logger.
+            If it doesn't then it updates it, which will store evaluation results.
+        """
+        compulsory_data_types = ['iteration', 'loss', 'accuracy', 'accuracy top-5']
+        if '_Model_Wrapper__logger' not in self.__dict__:
+            self.__logger = dict()
+        if '_Model_Wrapper__data_types' not in self.__dict__:
+            self.__data_types = compulsory_data_types
+        else:
+            for d in compulsory_data_types:
+                if d not in self.__data_types:
+                    self.__data_types.append(d)
+
+        self.__modes = ['train', 'val', 'test']
 
     def setInputsMapping(self, inputsMapping):
         """
@@ -554,9 +574,6 @@ class Model_Wrapper(object):
         callbacks = []
         ## Callbacks order:
 
-        # Store dmoel
-        callback_store_model = StoreModelWeightsOnEpochEnd(self, saveModel, params['epochs_for_save'])
-        callbacks.append(callback_store_model)
         # Extra callbacks (e.g. evaluation)
         callbacks += params['extra_callbacks']
 
@@ -570,6 +587,9 @@ class Model_Wrapper(object):
             callback_early_stop = EarlyStopping(self, patience=params['patience'], metric_check=params['metric_check'])
             callbacks.append(callback_early_stop)
 
+        # Store model
+        callback_store_model = StoreModelWeightsOnEpochEnd(self, saveModel, params['epochs_for_save'])
+        callbacks.append(callback_store_model)
 
         # Prepare data generators
         if params['homogeneous_batches']:
@@ -1335,7 +1355,7 @@ class Model_Wrapper(object):
         return self.predictBeamSearchNet(ds, parameters)
 
 
-    def predictBeamSearchNet(self, ds, parameters):
+    def predictBeamSearchNet(self, ds, parameters={}):
         """
         Approximates by beam search the best predictions of the net on the dataset splits chosen.
 
@@ -1521,31 +1541,47 @@ class Model_Wrapper(object):
         '''
 
         # Check input parameters and recover default values if needed
-        default_params = {'batch_size': 50, 'n_parallel_loaders': 8,
-                          'normalize': False, 'mean_substraction': True, 'n_samples': None,
+        default_params = {'batch_size': 50,
+                          'n_parallel_loaders': 8,
+                          'normalize': False,
+                          'mean_substraction': True,
+                          'n_samples': None,
                           'predict_on_sets': ['val']}
         params = self.checkParameters(parameters, default_params)
-
         predictions = dict()
         for s in params['predict_on_sets']:
             predictions[s] = []
 
             logging.info("<<< Predicting outputs of "+s+" set >>>")
             # Calculate how many interations are we going to perform
-            if default_params['n_samples'] is None:
+            if params['n_samples'] is None:
                 n_samples = eval("ds.len_"+s)
+                num_iterations = int(math.ceil(float(n_samples)/params['batch_size']))
+                # Prepare data generator
+                data_gen = Data_Batch_Generator(s,
+                                                self,
+                                                ds,
+                                                num_iterations,
+                                                batch_size=params['batch_size'],
+                                                normalization=params['normalize'],
+                                                data_augmentation=False,
+                                                mean_substraction=params['mean_substraction'],
+                                                predict=True).generator()
+
             else:
-                n_samples = default_params['n_samples']
-
-            num_iterations = int(math.ceil(float(n_samples)/params['batch_size']))
-            # Prepare data generator
-            data_gen = Data_Batch_Generator(s, self, ds, num_iterations,
-                                     batch_size=params['batch_size'],
-                                     normalization=params['normalize'],
-                                     data_augmentation=False,
-                                     mean_substraction=params['mean_substraction'],
-                                     predict=True).generator()
-
+                n_samples = params['n_samples']
+                num_iterations = int(math.ceil(float(n_samples)/params['batch_size']))
+                # Prepare data generator
+                data_gen = Data_Batch_Generator(s,
+                                            self,
+                                            ds,
+                                            num_iterations,
+                                            batch_size=params['batch_size'],
+                                            normalization=params['normalize'],
+                                            data_augmentation=False,
+                                            mean_substraction=params['mean_substraction'],
+                                            predict=True,
+                                            random_samples=n_samples).generator()
             # Predict on model
             if postprocess_fun is None:
                 out = self.model.predict_generator(data_gen,
@@ -3018,6 +3054,11 @@ class Model_Wrapper(object):
         :param init_weights: weights initialization function
         :return: output layer of the dense block
         """
+        if K.image_dim_ordering() == 'tf':
+            axis = -1
+        else:
+            axis = 1
+
         list_outputs = []
         prev_layer = in_layer
         for n in range(nb_layers):
@@ -3025,8 +3066,8 @@ class Model_Wrapper(object):
             new_layer = self.add_dense_layer(prev_layer, k, drop, init_weights)
             list_outputs.append(new_layer)
             # Merge with previous layer
-            prev_layer = merge([new_layer, prev_layer], mode='concat', concat_axis=1)
-        return merge(list_outputs, mode='concat', concat_axis=1)
+            prev_layer = merge([new_layer, prev_layer], mode='concat', concat_axis=axis)
+        return merge(list_outputs, mode='concat', concat_axis=axis)
 
 
     def add_dense_layer(self, in_layer, k, drop, init_weights):
@@ -3045,7 +3086,7 @@ class Model_Wrapper(object):
         :return: output layer
         """
 
-        out_layer = BatchNormalization() (in_layer)
+        out_layer = BatchNormalization(mode=2) (in_layer)
         out_layer = Activation('relu') (out_layer)
         out_layer = Convolution2D(k, 3, 3, init=init_weights, border_mode='same') (out_layer)
         if drop > 0.0:
@@ -3053,7 +3094,7 @@ class Model_Wrapper(object):
         return out_layer
 
 
-    def add_transitiondown_block(self, x, skip_dim,
+    def add_transitiondown_block(self, x,
                                nb_filters_conv, pool_size, init_weights,
                                nb_layers, growth, drop):
         """
@@ -3066,7 +3107,6 @@ class Model_Wrapper(object):
 
         # Input layers parameters
         :param x: input layer.
-        :param skip_dim: dimensions of the output skip connection
 
         # Convolutional layer parameters
         :param nb_filters_conv: number of convolutional filters to learn.
@@ -3080,26 +3120,30 @@ class Model_Wrapper(object):
 
         :return: [output layer, skip connection name]
         """
+        if K.image_dim_ordering() == 'tf':
+            axis = -1
+        else:
+            axis = 1
+
         # Dense Block
         x_dense = self.add_dense_block(x, nb_layers, growth, drop, init_weights)  # (growth*nb_layers) feature maps added
 
         ## Concatenation and skip connection recovery for upsampling path
-        skip = merge([x, x_dense], mode='concat', concat_axis=1, name='down_skip_'+str(skip_dim))
-        #skip = x_dense
+        skip = merge([x, x_dense], mode='concat', concat_axis=axis)
 
         # Transition Down
-        x_out = BatchNormalization()(skip)
+        x_out = BatchNormalization(mode=2)(skip)
         x_out = Activation('relu')(x_out)
         x_out = Convolution2D(nb_filters_conv, 1, 1, init=init_weights, border_mode='same')(x_out)
         if drop > 0.0:
             x_out = Dropout(drop)(x_out)
-        x_out = MaxPooling2D(pool_size=(pool_size,pool_size), name='transitiondown_'+str(skip_dim))(x_out)
+        x_out = MaxPooling2D(pool_size=(pool_size,pool_size)) (x_out)
 
         return [x_out, skip]
 
 
-    def add_transitionup_block(self, x, skip_conn, skip_conn_shapes,
-                               out_dim, nb_filters_deconv, init_weights,
+    def add_transitionup_block(self, x, skip_conn,
+                               nb_filters_deconv, init_weights,
                                nb_layers, growth, drop):
         """
         Adds a Transition Up Block. Consisting of Deconv, Skip Connection, Dense Block.
@@ -3112,10 +3156,8 @@ class Model_Wrapper(object):
         # Input layers parameters
         :param x: input layer.
         :param skip_conn: list of layers to be used as skip connections.
-        :param skip_conn_shapes: list of output shapes of the skip connection layers.
 
         # Deconvolutional layer parameters
-        :param out_dim: output dimensionality of the Deconvolutional layer [width, height]
         :param nb_filters_deconv: number of deconvolutional filters to learn.
         :param init_weights: weights initialization function
 
@@ -3126,14 +3168,20 @@ class Model_Wrapper(object):
 
         :return: output layer
         """
+        if K.image_dim_ordering() == 'tf':
+            axis = -1
+        else:
+            axis = 1
+
         # Transition Up
-        x = Deconvolution2D(nb_filters_deconv, 3, 3, init=init_weights,
-                            output_shape=tuple([None, nb_filters_deconv]+out_dim),
-                            subsample=(2, 2), border_mode='same')(x)
+        x = ArbitraryDeconvolution2D(nb_filters_deconv, 3, 3, init=init_weights,
+                                     subsample=(2, 2), border_mode='same')(x)
+        # x = Deconvolution2D(nb_filters_deconv, 3, 3, init=init_weights,
+        #                     output_shape=tuple([None, nb_filters_deconv]+out_dim),
+        #                     subsample=(2, 2), border_mode='same')(x)
+
         # Skip connection concatenation
-        if out_dim in skip_conn_shapes:
-            skip = skip_conn[skip_conn_shapes.index(out_dim)]
-            x = merge([skip, x], mode='concat', concat_axis=1, name='skip_'+str(out_dim))
+        x = merge([skip_conn, x], mode='concat', concat_axis=axis)
         # Dense Block
         x = self.add_dense_block(x, nb_layers, growth, drop, init_weights)  # (growth*nb_layers) feature maps added
         return x
