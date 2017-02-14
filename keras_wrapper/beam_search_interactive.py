@@ -953,9 +953,14 @@ class InteractiveBeamSearchSampler:
         :return:
         """
         # Check input parameters and recover default values if needed
-        default_params = {'batch_size': 50, 'n_parallel_loaders': 8, 'beam_size': 5,
-                          'normalize': False, 'mean_substraction': True,
-                          'predict_on_sets': ['val'], 'maxlen': 20, 'n_samples': 1,
+        default_params = {'batch_size': 50,
+                          'n_parallel_loaders': 8,
+                          'beam_size': 5,
+                          'normalize': False,
+                          'mean_substraction': True,
+                          'predict_on_sets': ['val'],
+                          'maxlen': 20,
+                          'n_samples': 1,
                           'model_inputs': ['source_text', 'state_below'],
                           'model_outputs': ['description'],
                           'dataset_inputs': ['source_text', 'state_below'],
@@ -964,6 +969,8 @@ class InteractiveBeamSearchSampler:
                           'sampling_type': 'max_likelihood',
                           'words_so_far': False,
                           'optimized_search': False,
+                          'state_below_index': -1,
+                          'output_text_index': 0,
                           'pos_unk': False,
                           'heuristic': 0,
                           'mapping': None
