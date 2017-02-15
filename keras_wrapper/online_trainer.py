@@ -56,6 +56,8 @@ class OnlineTrainer:
                                                                        pad_sequences=True,
                                                                        verbose=0)[0]
             list2file(self.params_prediction['store_hypotheses'], [hypothesis + '\n'], permission='a')
+            if self.verbose:
+                logging.info('Hypothesis: %s' % str(hypothesis))
 
         # 2. Post-edit this sample in order to match the reference --> Use y
         # 3. Update net parameters with the corrected samples
