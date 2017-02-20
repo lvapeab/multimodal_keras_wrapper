@@ -29,7 +29,7 @@ class OnlineTrainer:
         self.index2word_y = self.dataset.vocabulary[params_prediction['dataset_outputs'][0]]['idx2words']
         self.mapping = None if self.dataset.mapping == dict() else self.dataset.mapping
 
-    def train_online(self, X, Y):
+    def sample_and_train_online(self, X, Y):
         x = X[0]
         state_below = X[1]
         y = Y[0]
