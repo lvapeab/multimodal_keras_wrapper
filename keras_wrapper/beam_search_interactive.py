@@ -375,6 +375,62 @@ class BeamSearchEnsemble:
         else:
             return predictions, references, sources_sampling
 
+    def sample_beam_search(self, src_sentence):
+        """
+
+        :param src_sentence:
+        :return:
+        """
+        # Check input parameters and recover default values if needed
+        default_params = {'batch_size': 50,
+                          'n_parallel_loaders': 8,
+                          'beam_size': 5,
+                          'normalize': False,
+                          'mean_substraction': True,
+                          'predict_on_sets': ['val'],
+                          'maxlen': 20,
+                          'n_samples': 1,
+                          'model_inputs': ['source_text', 'state_below'],
+                          'model_outputs': ['description'],
+                          'dataset_inputs': ['source_text', 'state_below'],
+                          'dataset_outputs': ['description'],
+                          'alpha_factor': 1.0,
+                          'sampling_type': 'max_likelihood',
+                          'words_so_far': False,
+                          'optimized_search': False,
+                          'state_below_index': -1,
+                          'output_text_index': 0,
+                          'pos_unk': False,
+                          'heuristic': 0,
+                          'mapping': None
+                          }
+        params = self.checkParameters(self.params, default_params)
+        params['pad_on_batch'] = self.dataset.pad_on_batch[params['dataset_inputs'][-1]]
+        params['n_samples'] = 1
+        n_samples = params['n_samples']
+        if params['pos_unk']:
+            best_alphas = []
+
+        X = dict()
+        for input_id in params['model_inputs']:
+            X[input_id] = src_sentence
+        x = dict()
+        for input_id in params['model_inputs']:
+            x[input_id] = np.asarray([X[input_id]])
+        samples, unnormalized_scores, alphas = self.beam_search(x,
+                                                               params,
+                                                               null_sym=self.dataset.extra_words['<null>'])
+        if params['normalize']:
+            counts = [len(sample)**params['alpha_factor'] for sample in samples]
+            scores = [co / cn for co, cn in zip(unnormalized_scores, counts)]
+            best_score_idx = np.argmin(scores)
+            best_sample = samples[best_score_idx]
+            if params['pos_unk']:
+                best_alphas = np.asarray(alphas[best_score_idx])
+            else:
+                best_alphas = None
+
+        return np.asarray(best_sample), unnormalized_scores[best_score_idx], np.asarray(best_alphas)
 
     @staticmethod
     def checkParameters(input_params, default_params):
@@ -943,7 +999,7 @@ class InteractiveBeamSearchSampler:
         else:
             return samples, sample_scores, None
 
-    def sample_beam_search(self, src_sentence, fixed_words=dict(), max_N=0, isles=list(), idx2word=dict()):
+    def sample_beam_search_interactive(self, src_sentence, fixed_words=dict(), max_N=0, isles=list(), idx2word=dict()):
         """
 
         :param src_sentence:
@@ -989,7 +1045,7 @@ class InteractiveBeamSearchSampler:
         x = dict()
         for input_id in params['model_inputs']:
             x[input_id] = np.asarray([X[input_id]])
-        samples, scores, alphas = self.interactive_beam_search(x,
+        samples, unnormalized_scores, alphas = self.interactive_beam_search(x,
                                                                params,
                                                                fixed_words=fixed_words,
                                                                max_N=max_N,
@@ -998,15 +1054,15 @@ class InteractiveBeamSearchSampler:
                                                                idx2word=idx2word)
         if params['normalize']:
             counts = [len(sample)**params['alpha_factor'] for sample in samples]
-            scores = [co / cn for co, cn in zip(scores, counts)]
-            best_score = np.argmin(scores)
-            best_sample = samples[best_score]
+            scores = [co / cn for co, cn in zip(unnormalized_scores, counts)]
+            best_score_idx = np.argmin(scores)
+            best_sample = samples[best_score_idx]
             if params['pos_unk']:
-                best_alphas = np.asarray(alphas[best_score])
+                best_alphas = np.asarray(alphas[best_score_idx])
             else:
                 best_alphas = None
 
-        return np.asarray(best_sample), best_score, np.asarray(best_alphas)
+        return np.asarray(best_sample), scores[best_score_idx], np.asarray(best_alphas)
 
     @staticmethod
     def checkParameters(input_params, default_params):
