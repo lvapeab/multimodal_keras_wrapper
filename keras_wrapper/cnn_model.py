@@ -636,6 +636,7 @@ class Model_Wrapper(object):
         default_params = {'n_epochs': 1, 'batch_size': 50,
                           'maxlen': 100,  # sequence learning parameters (BeamSearch)
                           'homogeneous_batches': False,
+                          'joint_batches': 4,
                           'epochs_for_save': 1,
                           'num_iterations_val': None,
                           'n_parallel_loaders': 8,
@@ -732,6 +733,7 @@ class Model_Wrapper(object):
         default_params = {'n_epochs': 1, 'batch_size': 50,
                           'maxlen': 100,  # sequence learning parameters (BeamSearch)
                           'homogeneous_batches': False,
+                          'joint_batches': 4,
                           'epochs_for_save': 1,
                           'num_iterations_val': None,
                           'n_parallel_loaders': 8,
@@ -796,8 +798,12 @@ class Model_Wrapper(object):
 
         # Prepare data generators
         if params['homogeneous_batches']:
-            train_gen = Homogeneous_Data_Batch_Generator('train', self, ds, state['n_iterations_per_epoch'],
-                                                         batch_size=params['batch_size'], maxlen=params['maxlen'],
+            train_gen = Homogeneous_Data_Batch_Generator('train',
+                                                         self,
+                                                         ds,
+                                                         state['n_iterations_per_epoch'],
+                                                         batch_size=params['batch_size'],
+                                                         joint_batches=params['joint_batches'],
                                                          normalization=params['normalize'],
                                                          data_augmentation=params['data_augmentation'],
                                                          mean_substraction=params['mean_substraction']).generator()
@@ -3599,7 +3605,7 @@ class Model_Wrapper(object):
         :return: output layer
         """
 
-        out_layer = BatchNormalization(mode=2)(in_layer)
+        out_layer = BatchNormalization(mode=2, axis=1)(in_layer)
         out_layer = Activation('relu')(out_layer)
         out_layer = Convolution2D(k, 3, 3, init=init_weights, border_mode='same')(out_layer)
         if drop > 0.0:
@@ -3647,7 +3653,7 @@ class Model_Wrapper(object):
         skip = merge([x, x_dense], mode='concat', concat_axis=axis)
 
         # Transition Down
-        x_out = BatchNormalization(mode=2)(skip)
+        x_out = BatchNormalization(mode=2, axis=1)(skip)
         x_out = Activation('relu')(x_out)
         x_out = Convolution2D(nb_filters_conv, 1, 1, init=init_weights, border_mode='same')(x_out)
         if drop > 0.0:
@@ -3690,10 +3696,11 @@ class Model_Wrapper(object):
             raise ValueError('Invalid dim_ordering:', K.image_dim_ordering)
 
         # Transition Up
-        x = Deconvolution2D(nb_filters_deconv, 3, 3, init=init_weights,
-                                     subsample=(2, 2), border_mode='same')(x)
-        #x = ArbitraryDeconvolution2D(nb_filters_deconv, 3, 3, init=init_weights,
+        #x = Deconvolution2D(nb_filters_deconv, 3, 3, init=init_weights,
         #                             subsample=(2, 2), border_mode='same')(x)
+        x = ArbitraryDeconvolution2D(nb_filters_deconv, 3, 3, [None, nb_filters_deconv, None, None],
+                                     init=init_weights,
+                                     subsample=(2, 2), border_mode='same')(x)
 
         # Skip connection concatenation
         x = merge([skip_conn, x], mode='concat', concat_axis=axis)
