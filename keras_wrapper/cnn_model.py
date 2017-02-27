@@ -527,6 +527,11 @@ class Model_Wrapper(object):
                 if not os.path.isdir(self.plot_path):
                     os.makedirs(self.plot_path)
 
+
+    def setParams(self, params):
+        self.params = params
+
+
     def checkParameters(self, input_params, default_params):
         """
             Validates a set of input parameters and uses the default ones if not specified.
