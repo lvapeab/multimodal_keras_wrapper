@@ -9,6 +9,7 @@ import sys
 import time
 from keras_wrapper.dataset import Data_Batch_Generator
 from keras_wrapper.extra.read_write import list2file
+from keras_wrapper.utils import indices_2_one_hot
 
 
 class OnlineTrainer:
@@ -36,6 +37,7 @@ class OnlineTrainer:
 
         # 1. Generate a sample with the current model
         trans_indices, costs, alphas = self.sampler.sample_beam_search(x[0])
+        hypothesis_one_hot = indices_2_one_hot(trans_indices, self.dataset.vocabulary_len["target_text"])
 
         if self.params_prediction['pos_unk']:
             alphas = [alphas]
@@ -62,7 +64,7 @@ class OnlineTrainer:
         # 2. Post-edit this sample in order to match the reference --> Use y
         # 3. Update net parameters with the corrected samples
         for model in self.models:
-            model.trainNetFromSamples([x, state_below], y, self.params_training)
+            model.trainNetFromSamples([x, state_below, y[0], hypothesis_one_hot], y, self.params_training)
 
     def checkParameters(self, input_params, params_training=False):
         """

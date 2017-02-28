@@ -24,6 +24,23 @@ def bbox(img, mode='max'):
         return x, y, xmax, ymax
 
 
+def indices_2_one_hot(indices, n):
+    """
+    Converts a list of indices into one hot codification
+
+    :param indices: list of indices
+    :param n: integer. Size of the vocabulary
+    :return: numpy array with shape (len(indices), n)
+    """
+    one_hot = np.zeros((len(indices), n), dtype=np.int)
+    for i in range(len(indices)):
+        if indices[i] >= n:
+            raise ValueError("Index out of bounds when converting to one hot")
+        one_hot[i, indices[i]] = 1
+
+    return one_hot
+
+
 def build_OneVsOneECOC_Stage(n_classes_ecoc, input_shape, ds, stage1_lr=0.01, ecoc_version=2):
     n_classes = len(ds.classes)
     labels_list = [str(l) for l in range(n_classes)]
