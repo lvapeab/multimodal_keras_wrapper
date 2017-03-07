@@ -1,6 +1,9 @@
 # -*- coding: utf-8 -*-
 import logging
 import numpy as np
+import sys
+from keras import backend as K
+import copy
 from keras_wrapper.extra.read_write import list2file
 from keras_wrapper.utils import indices_2_one_hot, decode_predictions_beam_search
 
@@ -69,20 +72,40 @@ class OnlineTrainer:
         # 3. Update net parameters with the corrected samples
         for model in self.models:
             #model.trainNetFromSamples([x, state_below, y[0], hypothesis_one_hot], y, self.params_training)
+            print("INIT")
+            weights = model.trainable_weights
+            weights.sort(key=lambda x: x.name if x.name else x.auto_name)
+            for i in weights:
+                a = K.get_value(i)
+                a = np.sum(a)
+                print("%1s %s" % (str(K.sum(i).eval()), i.name))
+                print("%1s" % (str(a)))
+            model.optimizer.set_weights_theta(weights)
+            for i in range(10):
+                print("IT", i)
+                model.fit({"source_text": x, "state_below": state_below,
+                           "yref_input": y, "hyp_input": hypothesis_one_hot},
+                           np.zeros((y.shape[0], 1), dtype='float32'),
+                           batch_size=min(self.params_training['batch_size'], len(x)),
+                           nb_epoch=self.params_training['n_epochs'],
+                           verbose=self.params_training['verbose'],
+                           callbacks=[],
+                           validation_data=None,
+                           validation_split=self.params_training.get('val_split', 0.),
+                           shuffle=self.params_training['shuffle'],
+                           class_weight=None,
+                           sample_weight=None,
+                           initial_epoch=0)
+            weights = copy.deepcopy(model.trainable_weights)
+            weights.sort(key=lambda x: x.name if x.name else x.auto_name)
 
-            model.fit({"source_text": x, "state_below": state_below, "yref_input": y, "hyp_input": hypothesis_one_hot},
-                       np.zeros((y.shape[0], 1), dtype='float32'),
-                       batch_size=min(self.params_training['batch_size'], len(x)),
-                       nb_epoch=self.params_training['n_epochs'],
-                       verbose=self.params_training['verbose'],
-                       callbacks=[],
-                       validation_data=None,
-                       validation_split=self.params_training.get('val_split', 0.),
-                       shuffle=self.params_training['shuffle'],
-                       class_weight=None,
-                       sample_weight=None,
-                       initial_epoch=0)
-
+            for i in weights:
+                a = K.get_value(i)
+                a = np.sum(a)
+                print("%1s %s" % (str(K.sum(i).eval()), i.name))
+                print("%1s" % (str(a)))
+            model.optimizer.set_weights_theta(weights)
+            sys.exit()
     def checkParameters(self, input_params, params_training=False):
         """
         Validates a set of input parameters and uses the default ones if not specified.
