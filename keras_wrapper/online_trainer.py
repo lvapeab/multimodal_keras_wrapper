@@ -1,14 +1,11 @@
 # -*- coding: utf-8 -*-
-from keras_wrapper.dataset import Data_Batch_Generator
-
-import numpy as np
-import copy
-import math
 import logging
+import numpy as np
 import sys
-import time
-from keras_wrapper.dataset import Data_Batch_Generator
+from keras import backend as K
+import copy
 from keras_wrapper.extra.read_write import list2file
+from keras_wrapper.utils import indices_2_one_hot, decode_predictions_beam_search
 
 
 class OnlineTrainer:
@@ -36,6 +33,18 @@ class OnlineTrainer:
 
         # 1. Generate a sample with the current model
         trans_indices, costs, alphas = self.sampler.sample_beam_search(x[0])
+        hypothesis_one_hot = np.array([indices_2_one_hot(trans_indices, self.dataset.vocabulary_len["target_text"])])
+
+        if len(hypothesis_one_hot[0]) != len(y[0]):
+            dif = abs(len(hypothesis_one_hot[0]) - len(y[0]))
+            padding = np.zeros((dif, self.dataset.vocabulary_len["target_text"]))
+
+            if len(y[0]) < len(hypothesis_one_hot[0]):
+                y = np.array([np.concatenate((y[0], padding))])
+                state_below_pad = np.zeros((dif,), dtype="int32")
+                state_below = np.array([np.concatenate((state_below[0], state_below_pad))])
+            else:
+                hypothesis_one_hot = np.array([np.concatenate((hypothesis_one_hot[0], padding))])
 
         if self.params_prediction['pos_unk']:
             alphas = [alphas]
@@ -47,14 +56,14 @@ class OnlineTrainer:
             sources = None
 
         if self.params_prediction['store_hypotheses'] is not None:
-            hypothesis = self.models[0].decode_predictions_beam_search([trans_indices],
-                                                                       self.index2word_y,
-                                                                       alphas=alphas,
-                                                                       x_text=sources,
-                                                                       heuristic=heuristic,
-                                                                       mapping=self.mapping,
-                                                                       pad_sequences=True,
-                                                                       verbose=0)[0]
+            hypothesis = decode_predictions_beam_search([trans_indices],
+                                                        self.index2word_y,
+                                                        alphas=alphas,
+                                                        x_text=sources,
+                                                        heuristic=heuristic,
+                                                        mapping=self.mapping,
+                                                        pad_sequences=True,
+                                                        verbose=0)[0]
             list2file(self.params_prediction['store_hypotheses'], [hypothesis + '\n'], permission='a')
             if self.verbose:
                 logging.info('Hypothesis: %s' % str(hypothesis))
@@ -62,8 +71,41 @@ class OnlineTrainer:
         # 2. Post-edit this sample in order to match the reference --> Use y
         # 3. Update net parameters with the corrected samples
         for model in self.models:
-            model.trainNetFromSamples([x, state_below], y, self.params_training)
+            #model.trainNetFromSamples([x, state_below, y[0], hypothesis_one_hot], y, self.params_training)
+            print("INIT")
+            weights = model.trainable_weights
+            weights.sort(key=lambda x: x.name if x.name else x.auto_name)
+            for i in weights:
+                a = K.get_value(i)
+                a = np.sum(a)
+                print("%1s %s" % (str(K.sum(i).eval()), i.name))
+                print("%1s" % (str(a)))
+            model.optimizer.set_weights_theta(weights)
+            for i in range(10):
+                print("IT", i)
+                model.fit({"source_text": x, "state_below": state_below,
+                           "yref_input": y, "hyp_input": hypothesis_one_hot},
+                           np.zeros((y.shape[0], 1), dtype='float32'),
+                           batch_size=min(self.params_training['batch_size'], len(x)),
+                           nb_epoch=self.params_training['n_epochs'],
+                           verbose=self.params_training['verbose'],
+                           callbacks=[],
+                           validation_data=None,
+                           validation_split=self.params_training.get('val_split', 0.),
+                           shuffle=self.params_training['shuffle'],
+                           class_weight=None,
+                           sample_weight=None,
+                           initial_epoch=0)
+            weights = copy.deepcopy(model.trainable_weights)
+            weights.sort(key=lambda x: x.name if x.name else x.auto_name)
 
+            for i in weights:
+                a = K.get_value(i)
+                a = np.sum(a)
+                print("%1s %s" % (str(K.sum(i).eval()), i.name))
+                print("%1s" % (str(a)))
+            model.optimizer.set_weights_theta(weights)
+            sys.exit()
     def checkParameters(self, input_params, params_training=False):
         """
         Validates a set of input parameters and uses the default ones if not specified.
