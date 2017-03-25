@@ -570,7 +570,7 @@ def decode_predictions(preds, temperature, index2word, sampling_type, verbose=0)
     flattened_answer_pred = map(lambda x: index2word[x], sampling(scores=flattened_preds,
                                                                   sampling_type=sampling_type,
                                                                   temperature=temperature))
-    answer_pred_matrix = np.asarray(flattened_answer_pred).reshape(preds.shape[:2])
+    answer_pred_matrix = np.asarray(flattened_answer_pred).reshape(preds.shape[:-1])
     answer_pred = []
     EOS = '<eos>'
     PAD = '<pad>'
@@ -582,6 +582,38 @@ def decode_predictions(preds, temperature, index2word, sampling_type, verbose=0)
         tmp = ' '.join(a_no[init_token_pos:end_token_pos])
         answer_pred.append(tmp)
     return answer_pred
+
+
+def decode_multilabel(preds, index2word, min_val=0.5, get_probs=False, verbose=0):
+    """
+    Decodes predictions
+    :param preds: Predictions codified as the output of a softmax activation function.
+    :param index2word: Mapping from word indices into word characters.
+    :param min_val: Minimum value needed for considering a positive prediction.
+    :param get_probs: additionally return probability for each predicted label
+    :param verbose: Verbosity level, by default 0.
+    :return: List of decoded predictions.
+    """
+
+    if verbose > 0:
+        logging.info('Decoding prediction ...')
+        
+    answer_pred = []
+    probs_pred = []
+    for pred in preds:
+        current_pred = []
+        current_probs = []
+        for ind, word in enumerate(pred):
+            if word >= min_val:
+                current_pred.append(index2word[ind])
+                current_probs.append(word)
+        answer_pred.append(current_pred)
+        probs_pred.append(current_probs)
+
+    if get_probs:
+        return answer_pred, probs_pred
+    else:
+        return answer_pred
 
 
 def replace_unknown_words(src_word_seq, trg_word_seq, hard_alignment, unk_symbol,
