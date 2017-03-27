@@ -1,9 +1,6 @@
 # -*- coding: utf-8 -*-
 import logging
 import numpy as np
-import sys
-from keras import backend as K
-import copy
 from keras_wrapper.extra.read_write import list2file
 from keras_wrapper.utils import indices_2_one_hot, decode_predictions_beam_search
 
@@ -33,12 +30,14 @@ class OnlineTrainer:
 
         # 1. Generate a sample with the current model
         trans_indices, costs, alphas = self.sampler.sample_beam_search(x[0])
-        if self.params_training['custom_loss']:
+
+        if self.params_training['use_custom_loss']:
             hypothesis_one_hot = np.array([indices_2_one_hot(trans_indices, self.dataset.vocabulary_len["target_text"])])
 
             if len(hypothesis_one_hot[0]) != len(y[0]):
                 dif = abs(len(hypothesis_one_hot[0]) - len(y[0]))
                 padding = np.zeros((dif, self.dataset.vocabulary_len["target_text"]))
+
 
                 if len(y[0]) < len(hypothesis_one_hot[0]):
                     y = np.array([np.concatenate((y[0], padding))])
@@ -72,41 +71,28 @@ class OnlineTrainer:
         # 2. Post-edit this sample in order to match the reference --> Use y
         # 3. Update net parameters with the corrected samples
         for model in self.models:
-            if self.params_training['custom_loss']:
-                print("INIT")
+            if self.params_training['use_custom_loss']:
                 weights = model.trainable_weights
                 weights.sort(key=lambda x: x.name if x.name else x.auto_name)
-                for i in weights:
-                    a = K.get_value(i)
-                    a = np.sum(a)
-                    print("%1s %s" % (str(K.sum(i).eval()), i.name))
-                    print("%1s" % (str(a)))
-                model.optimizer.set_weights_theta(weights)
-                for i in range(10):
-                    print("IT", i)
-                    model.fit({"source_text": x, "state_below": state_below,
-                               "yref_input": y, "hyp_input": hypothesis_one_hot},
-                               np.zeros((y.shape[0], 1), dtype='float32'),
-                               batch_size=min(self.params_training['batch_size'], len(x)),
-                               nb_epoch=self.params_training['n_epochs'],
-                               verbose=self.params_training['verbose'],
-                               callbacks=[],
-                               validation_data=None,
-                               validation_split=self.params_training.get('val_split', 0.),
-                               shuffle=self.params_training['shuffle'],
-                               class_weight=None,
-                               sample_weight=None,
-                               initial_epoch=0)
-                weights = copy.deepcopy(model.trainable_weights)
-                weights.sort(key=lambda x: x.name if x.name else x.auto_name)
-
-                for i in weights:
-                    a = K.get_value(i)
-                    a = np.sum(a)
-                    print("%1s %s" % (str(K.sum(i).eval()), i.name))
-                    print("%1s" % (str(a)))
-                model.optimizer.set_weights_theta(weights)
-                sys.exit()
+                model.optimizer.set_weights(weights)
+                for k in range(1):
+                    loss_val = model.evaluate([x, state_below, y, hypothesis_one_hot],
+                                              np.zeros((y.shape[0], 1), dtype='float32'),
+                                              batch_size=1, verbose=0)
+                    loss = 1.0 if loss_val > 0 else 0.0
+                    model.optimizer.loss_value.set_value(loss)
+                    model.fit([x, state_below, y, hypothesis_one_hot],
+                              np.zeros((y.shape[0], 1), dtype='float32'),
+                              batch_size=min(self.params_training['batch_size'], len(x)),
+                              nb_epoch=self.params_training['n_epochs'],
+                              verbose=self.params_training['verbose'],
+                              callbacks=[],
+                              validation_data=None,
+                              validation_split=self.params_training.get('val_split', 0.),
+                              shuffle=self.params_training['shuffle'],
+                              class_weight=None,
+                              sample_weight=None,
+                              initial_epoch=0)
             else:
                 model.trainNetFromSamples([x, state_below], y, self.params_training)
 
@@ -141,6 +127,7 @@ class OnlineTrainer:
                                      'mapping': None
                                      }
         default_params_training = {'batch_size': 1,
+                                   'use_custom_loss': True,
                                    'n_parallel_loaders': 8,
                                    'n_epochs': 1,
                                    'shuffle': False,
