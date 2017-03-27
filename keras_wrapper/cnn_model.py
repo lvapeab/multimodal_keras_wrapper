@@ -776,7 +776,8 @@ class Model_Wrapper(object):
                           'normalize': False,
                           'mean_substraction': True,
                           'data_augmentation': True,
-                          'verbose': 1, 'eval_on_sets': ['val'],
+                          'verbose': 1,
+                          'eval_on_sets': ['val'],
                           'reload_epoch': 0,
                           'extra_callbacks': [],
                           'shuffle': True,
@@ -795,7 +796,7 @@ class Model_Wrapper(object):
         del save_params['extra_callbacks']
         self.training_parameters.append(save_params)
         self.__train_from_samples(x, y, params, class_weight=class_weight, sample_weight=sample_weight)
-        if params['verbose'] > 0:
+        if params['verbose'] > 1:
             logging.info("<<< Finished training model >>>")
 
     def __train(self, ds, params, state=dict()):
@@ -889,7 +890,7 @@ class Model_Wrapper(object):
 
     def __train_from_samples(self, x, y, params, class_weight=None, sample_weight=None, state=dict()):
 
-        if params['verbose'] > 0:
+        if params['verbose'] > 1:
             logging.info("Training parameters: " + str(params))
         callbacks = []
         ## Callbacks order:
