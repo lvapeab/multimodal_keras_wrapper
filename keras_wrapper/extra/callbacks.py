@@ -9,7 +9,7 @@ import warnings
 import numpy as np
 import logging
 from keras.callbacks import Callback as KerasCallback
-from keras_wrapper.utils import decode_predictions_one_hot, decode_predictions_beam_search, decode_predictions
+from keras_wrapper.utils import decode_predictions_one_hot, decode_predictions_beam_search, decode_predictions, decode_multilabel
 
 import evaluation
 from read_write import *
@@ -57,7 +57,11 @@ class EvalPerformance(KerasCallback):
                  batch_size,
                  each_n_epochs=1,
                  extra_vars=None,
+                 normalize=False,
                  is_text=False,
+                 is_multilabel=False,
+		         multilabel_idx=None,
+                 min_pred_multilabel=0.5,
                  index2word_y=None,
                  input_text_id=None,
                  index2word_x=None,
@@ -73,6 +77,7 @@ class EvalPerformance(KerasCallback):
                  sampling_type='max_likelihood',
                  save_each_evaluation=True,
                  out_pred_idx=None,
+                 max_plot=1.0,
                  verbose=1):
         """
         Evaluates a model each N epochs or updates
@@ -85,7 +90,11 @@ class EvalPerformance(KerasCallback):
         :param batch_size: batch size used during sampling
         :param each_n_epochs: sampling each this number of epochs or updates
         :param extra_vars: dictionary of extra variables
+        :param normalize: switch on/off data normalization
         :param is_text: defines if the predicted info is of type text (in that case the data will be converted from values into a textual representation)
+        :param is_multilabel: are we applying multi-label prediction?
+        :param multilabel_idx: output index where to apply the evaluation (set to None if the model has a single output)
+        :param min_pred_multilabel: minimum prediction value considered for positive prediction
         :param index2word_y: mapping from the indices to words (only needed if is_text==True)
         :param input_text_id:
         :param index2word_x: mapping from the indices to words (only needed if is_text==True)
@@ -101,6 +110,7 @@ class EvalPerformance(KerasCallback):
         :param sampling_type: type of sampling used (multinomial or max_likelihood)
         :param save_each_evaluation: save the model each time we evaluate (epochs or updates)
         :param out_pred_idx: index of the output prediction used for evaluation (only applicable if model has more than one output, else set to None)
+        :param max_plot: maximum value shown on the performance plots generated
         :param verbose: verbosity level; by default 1
         """
         self.model_to_eval = model
@@ -110,6 +120,9 @@ class EvalPerformance(KerasCallback):
         self.index2word_x = index2word_x
         self.index2word_y = index2word_y
         self.is_text = is_text
+        self.is_multilabel = is_multilabel
+        self.multilabel_idx = multilabel_idx
+        self.min_pred_multilabel = min_pred_multilabel
         self.is_3DLabel = is_3DLabel
         self.sampling = sampling
         self.beam_search = beam_search
@@ -118,6 +131,7 @@ class EvalPerformance(KerasCallback):
         self.batch_size = batch_size
         self.each_n_epochs = each_n_epochs
         self.extra_vars = extra_vars
+        self.normalize = normalize
         self.save_path = save_path
         self.eval_on_epochs = eval_on_epochs
         self.start_eval_on_epoch = start_eval_on_epoch
@@ -131,7 +145,9 @@ class EvalPerformance(KerasCallback):
         self.verbose = verbose
         self.cum_update = 0
         self.epoch = reload_epoch
+        self.max_plot = max_plot
         self.save_each_evaluation = save_each_evaluation
+        self.written_header = False
         create_dir_if_not_exists(self.save_path)
         super(PrintPerformanceMetricOnEpochEndOrEachNUpdates, self).__init__()
 
@@ -169,6 +185,7 @@ class EvalPerformance(KerasCallback):
     def evaluate(self, epoch, counter_name='epoch'):
 
         # Evaluate on each set separately
+        all_metrics = []
         for s in self.set_name:
             # Apply model predictions
             if self.beam_search:
@@ -177,14 +194,16 @@ class EvalPerformance(KerasCallback):
                                      'predict_on_sets': [s],
                                      'pos_unk': False,
                                      'heuristic': 0,
-                                     'mapping': None}
+                                     'mapping': None,
+                                     'normalize': self.normalize}
                 params_prediction.update(checkDefaultParamsBeamSearch(self.extra_vars))
                 predictions = self.model_to_eval.predictBeamSearchNet(self.ds, params_prediction)[s]
             else:
                 orig_size = self.extra_vars.get('eval_orig_size', False)
                 params_prediction = {'batch_size': self.batch_size,
                                      'n_parallel_loaders': self.extra_vars['n_parallel_loaders'],
-                                     'predict_on_sets': [s]}
+                                     'predict_on_sets': [s],
+                                     'normalize': self.normalize}
                 # Convert predictions
                 postprocess_fun = None
                 if self.is_3DLabel:
@@ -234,6 +253,20 @@ class EvalPerformance(KerasCallback):
                                                      self.sampling_type,
                                                      verbose=self.verbose)
 
+                # Apply detokenization function if needed
+                if self.extra_vars.get('apply_detokenization',False):
+                    predictions = map(self.extra_vars['detokenize_f'], predictions)
+
+
+            elif self.is_multilabel:
+                if self.multilabel_idx is not None:
+                    predictions = predictions[self.multilabel_idx]
+                predictions = decode_multilabel(predictions, 
+                                                self.index2word_y, 
+                                                min_val=self.min_pred_multilabel, 
+                                                verbose=self.verbose)
+                    
+
             # Store predictions
             if self.write_samples:
                 # Store result
@@ -274,16 +307,23 @@ class EvalPerformance(KerasCallback):
                     # Store in model log
                     self.model_to_eval.log(s, counter_name, epoch)
                     for metric_ in sorted(metrics):
+                        all_metrics.append(metric_)
                         value = metrics[metric_]
-                        header += metric_ + ', '
-                        line += str(value) + ', '
+                        header += metric_ + ','
+                        line += str(value) + ','
                         # Store in model log
                         self.model_to_eval.log(s, metric_, value)
-                    if epoch == 1 or epoch == self.start_eval_on_epoch:
+                    if not self.written_header:
                         f.write(header + '\n')
+                        self.written_header = True
                     f.write(line + '\n')
+
                 if self.verbose > 0:
                     logging.info('Done evaluating on metric ' + metric)
+
+        # Plot results so far
+        self.model_to_eval.plot(counter_name, set(all_metrics), self.set_name, upperbound=self.max_plot)
+
         # Save the model
         if self.save_each_evaluation:
             from keras_wrapper.cnn_model import saveModel

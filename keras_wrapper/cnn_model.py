@@ -1,7 +1,6 @@
 import matplotlib as mpl
 from keras.engine.training import Model
-from keras.layers import Convolution2D, MaxPooling2D, ZeroPadding2D, AveragePooling2D, Deconvolution2D, \
-    ArbitraryDeconvolution2D
+from keras.layers import Convolution2D, MaxPooling2D, ZeroPadding2D, AveragePooling2D, Deconvolution2D, ArbitraryDeconvolution2D, Concat#, Conv2DTranspose
 from keras.layers import merge, Dense, Dropout, Flatten, Input, Activation, BatchNormalization
 from keras.layers.advanced_activations import PReLU
 from keras.models import Sequential, model_from_json
@@ -230,7 +229,7 @@ def updateModel(model, model_path, update_num, reload_epoch=True, full_path=Fals
 
 def transferWeights(old_model, new_model, layers_mapping):
     """
-    Transfers all existent layer' weights from an old model to a new model.
+    Transfers all existent layers' weights from an old model to a new model.
 
     :param old_model: old version of the model, where the weights will be picked
     :param new_model: new version of the model, where the weights will be transfered to
@@ -287,6 +286,28 @@ def transferWeights(old_model, new_model, layers_mapping):
 
     return new_model
 
+def read_layer_names(model, starting_name=None):
+    """
+        Reads the existent layers' names from a model starting after a layer specified by its name
+
+        :param model: model whose layers' names will be read
+        :param starting_name: name of the layer after which the layers' names will be read (if None, then all the layers' names will be read)
+        :return: list of layers' names
+        """
+
+    if starting_name is None:
+        read = True
+    else:
+        read = False
+
+    layers_names = []
+    for layer in model.layers:
+        if read:
+            layers_names.append(layer.name)
+        elif layer.name == starting_name:
+            read = True
+
+    return layers_names
 
 # ------------------------------------------------------- #
 #       MAIN CLASS
@@ -388,13 +409,13 @@ class Model_Wrapper(object):
                     logging.info("<<< Loading weights from file " + weights_path + " >>>")
                 self.model.load_weights(weights_path, seq_to_functional=seq_to_functional)
 
-    def updateLogger(self):
+    def updateLogger(self, force=False):
         """
             Checks if the model contains an updated logger.
             If it doesn't then it updates it, which will store evaluation results.
         """
         compulsory_data_types = ['iteration', 'loss', 'accuracy', 'accuracy top-5']
-        if '_Model_Wrapper__logger' not in self.__dict__:
+        if '_Model_Wrapper__logger' not in self.__dict__ or force:
             self.__logger = dict()
         if '_Model_Wrapper__data_types' not in self.__dict__:
             self.__data_types = compulsory_data_types
@@ -425,15 +446,17 @@ class Model_Wrapper(object):
         self.outputsMapping = outputsMapping
         self.acc_output = acc_output
 
-    def setOptimizer(self, lr=None, momentum=None, loss=None, metrics=None,
-                     decay=0.0, clipnorm=10., clipvalue=0., optimizer=None, sample_weight_mode=None):
+    def setOptimizer(self, lr=None, momentum=None, loss=None, loss_weights=None, metrics=None, epsilon=1e-8,
+                     nesterov=True, decay=0.0, clipnorm=10., clipvalue=0., optimizer=None, sample_weight_mode=None):
         """
             Sets a new optimizer for the CNN model.
 
             :param lr: learning rate of the network
             :param momentum: momentum of the network (if None, then momentum = 1-lr)
             :param loss: loss function applied for optimization
+	        :param loss_weights: weights given to multi-loss models
             :param metrics: list of Keras' metrics used for evaluating the model. To specify different metrics for different outputs of a multi-output model, you could also pass a dictionary, such as `metrics={'output_a': 'accuracy'}`.
+            :param epsilon: fuzz factor
             :param decay: lr decay
             :param clipnorm: gradients' clip norm
             :param optimizer: string identifying the type of optimizer used (default: SGD)
@@ -456,19 +479,19 @@ class Model_Wrapper(object):
             metrics = []
 
         if optimizer is None or optimizer.lower() == 'sgd':
-            optimizer = SGD(lr=lr, clipnorm=clipnorm, clipvalue=clipvalue, decay=decay, momentum=momentum, nesterov=True)
+            optimizer = SGD(lr=lr, clipnorm=clipnorm, clipvalue=clipvalue, decay=decay, momentum=momentum, nesterov=nesterov)
         elif optimizer.lower() == 'adam':
-            optimizer = Adam(lr=lr, clipnorm=clipnorm, clipvalue=clipvalue, decay=decay)
+            optimizer = Adam(lr=lr, clipnorm=clipnorm, clipvalue=clipvalue, decay=decay, epsilon=epsilon)
         elif optimizer.lower() == 'adagrad':
-            optimizer = Adagrad(lr=lr, clipnorm=clipnorm, clipvalue=clipvalue, decay=decay)
+            optimizer = Adagrad(lr=lr, clipnorm=clipnorm, clipvalue=clipvalue, decay=decay, epsilon=epsilon)
         elif optimizer.lower() == 'rmsprop':
-            optimizer = RMSprop(lr=lr, clipnorm=clipnorm, clipvalue=clipvalue, decay=decay)
+            optimizer = RMSprop(lr=lr, clipnorm=clipnorm, clipvalue=clipvalue, decay=decay, epsilon=epsilon)
         elif optimizer.lower() == 'nadam':
-            optimizer = Nadam(lr=lr, clipnorm=clipnorm, clipvalue=clipvalue, decay=decay)
+            optimizer = Nadam(lr=lr, clipnorm=clipnorm, clipvalue=clipvalue, decay=decay, epsilon=epsilon)
         elif optimizer.lower() == 'adamax':
-            optimizer = Adamax(lr=lr, clipnorm=clipnorm, clipvalue=clipvalue, decay=decay)
+            optimizer = Adamax(lr=lr, clipnorm=clipnorm, clipvalue=clipvalue, decay=decay, epsilon=epsilon)
         elif optimizer.lower() == 'adadelta':
-            optimizer = Adadelta(lr=lr, clipnorm=clipnorm, clipvalue=clipvalue, decay=decay)
+            optimizer = Adadelta(lr=lr, clipnorm=clipnorm, clipvalue=clipvalue, decay=decay, epsilon=epsilon)
         else:
             raise Exception('\tThe chosen optimizer is not implemented.')
 
@@ -477,7 +500,7 @@ class Model_Wrapper(object):
 
         # compile differently depending if our model is 'Sequential', 'Model' or 'Graph'
         if isinstance(self.model, Sequential) or isinstance(self.model, Model):
-            self.model.compile(optimizer=optimizer, metrics=metrics, loss=loss,
+            self.model.compile(optimizer=optimizer, metrics=metrics, loss=loss, loss_weights=loss_weights,
                                sample_weight_mode=sample_weight_mode)
         else:
             raise NotImplementedError()
@@ -546,7 +569,7 @@ class Model_Wrapper(object):
             if key in valid_params:
                 params[key] = val
             else:
-                raise Exception("Parameter '" + key + "' is not a valid parameter.")
+                logging.warn("Parameter '" + key + "' is not a valid parameter.")
 
         # Use default parameters if not provided
         for key, default_val in default_params.iteritems():
@@ -742,7 +765,8 @@ class Model_Wrapper(object):
 
         # Check input parameters and recover default values if needed
 
-        default_params = {'n_epochs': 1, 'batch_size': 50,
+        default_params = {'n_epochs': 1,
+                          'batch_size': 50,
                           'maxlen': 100,  # sequence learning parameters (BeamSearch)
                           'homogeneous_batches': False,
                           'joint_batches': 4,
@@ -753,7 +777,8 @@ class Model_Wrapper(object):
                           'normalize': False,
                           'mean_substraction': True,
                           'data_augmentation': True,
-                          'verbose': 1, 'eval_on_sets': ['val'],
+                          'verbose': 1,
+                          'eval_on_sets': ['val'],
                           'reload_epoch': 0,
                           'extra_callbacks': [],
                           'shuffle': True,
@@ -764,13 +789,15 @@ class Model_Wrapper(object):
                           'each_n_epochs': 1,
                           'start_eval_on_epoch':0, # early stopping parameters
                           'lr_decay': None, # LR decay parameters
-                          'lr_gamma': 0.1}
+                          'lr_gamma': 0.1,
+                          'custom_loss': False
+                          }
         params = self.checkParameters(parameters, default_params)
         save_params = copy.copy(params)
         del save_params['extra_callbacks']
         self.training_parameters.append(save_params)
         self.__train_from_samples(x, y, params, class_weight=class_weight, sample_weight=sample_weight)
-        if params['verbose'] > 0:
+        if params['verbose'] > 1:
             logging.info("<<< Finished training model >>>")
 
     def __train(self, ds, params, state=dict()):
@@ -864,7 +891,7 @@ class Model_Wrapper(object):
 
     def __train_from_samples(self, x, y, params, class_weight=None, sample_weight=None, state=dict()):
 
-        if params['verbose'] > 0:
+        if params['verbose'] > 1:
             logging.info("Training parameters: " + str(params))
         callbacks = []
         ## Callbacks order:
@@ -2475,7 +2502,86 @@ class Model_Wrapper(object):
         else:
             return self.__logger[mode][data_type]
 
-    def plot(self):
+
+    def plot(self, time_measure, metrics, splits, upperbound=None, colours_shapes_dict={}):
+        """
+        Plots the training progress information
+
+        Example of input:
+        model.plot('epoch', ['accuracy'], ['val', 'test'],
+                   upperbound=1, colours_dict={'accuracy_val', 'b', 'accuracy_test', 'g'})
+
+        :param time_measure: either 'epoch' or 'iteration'
+        :param metrics: list of metrics that we want to plot
+        :param splits: list of data splits that we want to plot
+        :param upperbound: upper bound of the metrics about to plot (usually upperbound=1.0)
+        :param colours_shapes_dict: dictionary of '<metric>_<split>' and the colour and/or shape
+                that we want them to have in the plot
+        """
+
+        # Build default colours_shapes_dict if not provided
+        if not colours_shapes_dict:
+            default_colours = ['b','g','y','k']
+            default_shapes = ['-', 'o', '.']
+            m = 0
+            for met in metrics:
+                s = 0
+                for sp in splits:
+                    colours_shapes_dict[met+'_'+sp] = default_colours[m]+default_shapes[s]
+                    s += 1
+                    s = s%len(default_shapes)
+                m += 1
+                m = m % len(default_colours)
+
+        plt.figure(1)
+
+        all_iterations = []
+        for sp in splits:
+            if sp not in self.__logger:
+                raise Exception("There is no performance data from split '"+sp+"' in the model log.")
+            if time_measure not in self.__logger[sp]:
+                raise Exception("There is no performance data on each '"+time_measure+"' in the model log for split '"+sp+"'.")
+
+            iterations = self.__logger[sp][time_measure]
+            all_iterations = all_iterations + iterations
+
+            for met in metrics:
+                if met not in self.__logger[sp]:
+                    raise Exception("There is no performance data for metric '"+met+"' in the model log for split '"+sp+"'.")
+
+                measure = self.__logger[sp][met]
+                #plt.subplot(211)
+                # plt.plot(iterations, loss, colours['train_loss']+'o')
+                plt.plot(iterations, measure, colours_shapes_dict[met+'_'+sp])
+
+        max_iter = np.max(all_iterations + [0])
+
+        # Plot upperbound
+        if upperbound is not None:
+            #plt.subplot(211)
+            plt.plot([0, max_iter], [upperbound, upperbound], 'r-')
+            plt.axis([0, max_iter, 0, upperbound])  # limit height to 1
+
+        # Fill labels
+        plt.xlabel(time_measure)
+        #plt.subplot(211)
+        plt.title('Training progress')
+
+        # Create plots dir
+        if not os.path.isdir(self.model_path):
+            os.makedirs(self.model_path)
+
+        # Save figure
+        plot_file = self.model_path + '/'+time_measure+'_' + str(max_iter) + '.jpg'
+        plt.savefig(plot_file)
+        if not self.silence:
+            logging.info("<<< Progress plot saved in " +plot_file+' >>>')
+
+        # Close plot window
+        plt.close()
+
+
+    def plot_old(self):
         """
             Plots the training progress information.
         """
@@ -3467,7 +3573,7 @@ class Model_Wrapper(object):
     #       DENSE NETS
     ##############################
 
-    def add_dense_block(self, in_layer, nb_layers, k, drop, init_weights):
+    def add_dense_block(self, in_layer, nb_layers, k, drop, init_weights, name=None):
         """
         Adds a Dense Block for the transition down path.
 
@@ -3493,14 +3599,22 @@ class Model_Wrapper(object):
         list_outputs = []
         prev_layer = in_layer
         for n in range(nb_layers):
+            if name is not None:
+                name_dense = name+'_'+str(n)
+                name_merge = 'merge'+name+'_'+str(n)
+            else:
+                name_dense = None
+                name_merge = None
+
             # Insert dense layer
-            new_layer = self.add_dense_layer(prev_layer, k, drop, init_weights)
+            new_layer = self.add_dense_layer(prev_layer, k, drop, init_weights, name=name_dense)
             list_outputs.append(new_layer)
             # Merge with previous layer
-            prev_layer = merge([new_layer, prev_layer], mode='concat', concat_axis=axis)
-        return merge(list_outputs, mode='concat', concat_axis=axis)
+            prev_layer = merge([new_layer, prev_layer], mode='concat', concat_axis=axis, name=name_merge)
 
-    def add_dense_layer(self, in_layer, k, drop, init_weights):
+        return merge(list_outputs, mode='concat', concat_axis=axis, name=name_merge)
+
+    def add_dense_layer(self, in_layer, k, drop, init_weights, name=None):
         """
         Adds a Dense Layer inside a Dense Block, which is composed of BN, ReLU, Conv and Dropout
 
@@ -3516,11 +3630,22 @@ class Model_Wrapper(object):
         :return: output layer
         """
 
-        out_layer = BatchNormalization(mode=2, axis=1)(in_layer)
-        out_layer = Activation('relu')(out_layer)
-        out_layer = Convolution2D(k, 3, 3, init=init_weights, border_mode='same')(out_layer)
+        if name is not None:
+            name_batch = 'batchnormalization'+name
+            name_activ = 'activation'+name
+            name_conv = 'convolution2d'+name
+            name_drop = 'dropout'+name
+        else:
+            name_batch = None
+            name_activ = None
+            name_conv = None
+            name_drop = None
+
+        out_layer = BatchNormalization(mode=2, axis=1, name=name_batch)(in_layer)
+        out_layer = Activation('relu', name=name_activ)(out_layer)
+        out_layer = Convolution2D(k, 3, 3, init=init_weights, border_mode='same', name=name_conv)(out_layer)
         if drop > 0.0:
-            out_layer = Dropout(drop)(out_layer)
+            out_layer = Dropout(drop, name=name_drop)(out_layer)
         return out_layer
 
     def add_transitiondown_block(self, x,
@@ -3575,7 +3700,7 @@ class Model_Wrapper(object):
 
     def add_transitionup_block(self, x, skip_conn,
                                nb_filters_deconv, init_weights,
-                               nb_layers, growth, drop):
+                               nb_layers, growth, drop, name=None):
         """
         Adds a Transition Up Block. Consisting of Deconv, Skip Connection, Dense Block.
 
@@ -3606,17 +3731,26 @@ class Model_Wrapper(object):
         else:
             raise ValueError('Invalid dim_ordering:', K.image_dim_ordering)
 
-        # Transition Up
-        #x = Deconvolution2D(nb_filters_deconv, 3, 3, init=init_weights,
-        #                             subsample=(2, 2), border_mode='same')(x)
-        x = ArbitraryDeconvolution2D(nb_filters_deconv, 3, 3, [None, nb_filters_deconv, None, None],
-                                     init=init_weights,
-                                     subsample=(2, 2), border_mode='same')(x)
+        x = Deconvolution2D(nb_filters_deconv, 3, 3,
+                            subsample=(2, 2),
+                            init=init_weights, border_mode='same')(x)
+        #x = ArbitraryDeconvolution2D(nb_filters_deconv, 3, 3, input_deconv,
+        #                             init=init_weights, subsample=(2, 2), border_mode='same')(x)
+        # x = Conv2DTranspose(nb_filters_deconv, 3,
+        #                     strides=(2, 2),
+        #                     kernel_initializer=init_weights, padding='same')(x)
 
         # Skip connection concatenation
-        x = merge([skip_conn, x], mode='concat', concat_axis=axis)
+        if name is not None:
+            name_merge = 'merge'+name
+        else:
+            name_merge = None
+
+        x = merge([skip_conn, x], mode='concat', concat_axis=axis, name=name_merge)
+        #x = Concat(cropping=[None, None, 'center', 'center'])([skip_conn, x])
+
         # Dense Block
-        x = self.add_dense_block(x, nb_layers, growth, drop, init_weights)  # (growth*nb_layers) feature maps added
+        x = self.add_dense_block(x, nb_layers, growth, drop, init_weights, name=name)  # (growth*nb_layers) feature maps added
         return x
 
     def Empty(self, nOutput, input):

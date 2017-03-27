@@ -23,7 +23,7 @@ class OnlineTrainer:
         self.index2word_y = self.dataset.vocabulary[params_prediction['dataset_outputs'][0]]['idx2words']
         self.mapping = None if self.dataset.mapping == dict() else self.dataset.mapping
 
-    def sample_and_train_online(self, X, Y):
+    def sample_and_train_online(self, X, Y, src_words=None):
         x = X[0]
         state_below = X[1]
         y = Y[0]
@@ -38,6 +38,7 @@ class OnlineTrainer:
                 dif = abs(len(hypothesis_one_hot[0]) - len(y[0]))
                 padding = np.zeros((dif, self.dataset.vocabulary_len["target_text"]))
 
+
                 if len(y[0]) < len(hypothesis_one_hot[0]):
                     y = np.array([np.concatenate((y[0], padding))])
                     state_below_pad = np.zeros((dif,), dtype="int32")
@@ -47,7 +48,7 @@ class OnlineTrainer:
 
         if self.params_prediction['pos_unk']:
             alphas = [alphas]
-            sources = [x]
+            sources = [x] if not src_words else src_words
             heuristic = self.params_prediction['heuristic']
         else:
             alphas = None
@@ -64,7 +65,7 @@ class OnlineTrainer:
                                                         pad_sequences=True,
                                                         verbose=0)[0]
             list2file(self.params_prediction['store_hypotheses'], [hypothesis + '\n'], permission='a')
-            if self.verbose:
+            if self.verbose > 1:
                 logging.info('Hypothesis: %s' % str(hypothesis))
 
         # 2. Post-edit this sample in order to match the reference --> Use y
@@ -130,6 +131,7 @@ class OnlineTrainer:
                                    'n_parallel_loaders': 8,
                                    'n_epochs': 1,
                                    'shuffle': False,
+                                   'custom_loss': False,
                                    'homogeneous_batches': False,
                                    'lr_decay': None,
                                    'lr_gamma': None,
@@ -155,7 +157,7 @@ class OnlineTrainer:
             if key in valid_params:
                 params[key] = val
             else:
-                raise Exception("Parameter '" + key + "' is not a valid parameter.")
+                logging.warn("Parameter '" + key + "' is not a valid parameter.")
 
         # Use default parameters if not provided
         for key, default_val in default_params.iteritems():
