@@ -746,6 +746,7 @@ class Model_Wrapper(object):
                           'maxlen': 100,  # sequence learning parameters (BeamSearch)
                           'homogeneous_batches': False,
                           'joint_batches': 4,
+                          'use_custom_loss': False,
                           'epochs_for_save': 1,
                           'num_iterations_val': None,
                           'n_parallel_loaders': 8,
