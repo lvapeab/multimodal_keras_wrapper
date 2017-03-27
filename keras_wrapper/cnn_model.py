@@ -569,7 +569,7 @@ class Model_Wrapper(object):
             if key in valid_params:
                 params[key] = val
             else:
-                raise Exception("Parameter '" + key + "' is not a valid parameter.")
+                logging.warn("Parameter '" + key + "' is not a valid parameter.")
 
         # Use default parameters if not provided
         for key, default_val in default_params.iteritems():
@@ -765,7 +765,8 @@ class Model_Wrapper(object):
 
         # Check input parameters and recover default values if needed
 
-        default_params = {'n_epochs': 1, 'batch_size': 50,
+        default_params = {'n_epochs': 1,
+                          'batch_size': 50,
                           'maxlen': 100,  # sequence learning parameters (BeamSearch)
                           'homogeneous_batches': False,
                           'joint_batches': 4,
@@ -786,7 +787,9 @@ class Model_Wrapper(object):
                           'each_n_epochs': 1,
                           'start_eval_on_epoch':0, # early stopping parameters
                           'lr_decay': None, # LR decay parameters
-                          'lr_gamma': 0.1}
+                          'lr_gamma': 0.1,
+                          'custom_loss': False
+                          }
         params = self.checkParameters(parameters, default_params)
         save_params = copy.copy(params)
         del save_params['extra_callbacks']
