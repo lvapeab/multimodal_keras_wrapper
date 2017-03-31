@@ -1848,15 +1848,12 @@ class Dataset(object):
         tokenized = " ".join(tokenized)
         return tokenized
 
-
-    def detokenize_none(self, caption):
+    def detokenize_bpe(self,caption):
         """
-        Does not detokenizes the sentences.
-
-        :param caption: String to detokenize
-        :return: Tokenized version of caption
+        Reverts BPE segmentation (https://github.com/rsennrich/subword-nmt)
         """
-        return caption
+        detokenized = re.sub('@@ ', '', str(caption).strip())
+        return detokenized
 
     def detokenize_none_char(self,caption):
         """
@@ -1877,7 +1874,7 @@ class Dataset(object):
 
         def deconvert_chars(x):
             if x == '<space>':
-                    return ' '
+                return ' '
             else:
                 return x.encode('utf-8')
 
