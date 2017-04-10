@@ -1029,7 +1029,9 @@ class InteractiveBeamSearchSampler:
                           'output_text_index': 0,
                           'pos_unk': False,
                           'heuristic': 0,
-                          'mapping': None
+                          'mapping': None,
+                          'apply_detokenization': False,
+                          'detokenize_f': 'detokenize_none'
                           }
         params = self.checkParameters(self.params, default_params)
         params['pad_on_batch'] = self.dataset.pad_on_batch[params['dataset_inputs'][-1]]
@@ -1080,7 +1082,7 @@ class InteractiveBeamSearchSampler:
             if key in valid_params:
                 params[key] = val
             else:
-                raise Exception("Parameter '" + key + "' is not a valid parameter.")
+                logger.warn("Parameter '" + key + "' is an unexpected parameter.")
 
         # Use default parameters if not provided
         for key, default_val in default_params.iteritems():
