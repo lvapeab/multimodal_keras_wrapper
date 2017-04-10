@@ -259,7 +259,9 @@ class BeamSearchEnsemble:
                           'optimized_search': False,
                           'pos_unk': False,
                           'heuristic': 0,
-                          'mapping': None
+                          'mapping': None,
+                          'apply_detokenization': False,
+                          'detokenize_f': 'detokenize_none'
                           }
         params = self.checkParameters(self.params, default_params)
 
@@ -402,7 +404,9 @@ class BeamSearchEnsemble:
                           'output_text_index': 0,
                           'pos_unk': False,
                           'heuristic': 0,
-                          'mapping': None
+                          'mapping': None,
+                          'apply_detokenization': False,
+                          'detokenize_f': 'detokenize_none'
                           }
         params = self.checkParameters(self.params, default_params)
         params['pad_on_batch'] = self.dataset.pad_on_batch[params['dataset_inputs'][-1]]
