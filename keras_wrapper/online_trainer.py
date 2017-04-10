@@ -38,7 +38,6 @@ class OnlineTrainer:
                 dif = abs(len(hypothesis_one_hot[0]) - len(y[0]))
                 padding = np.zeros((dif, self.dataset.vocabulary_len["target_text"]))
 
-
                 if len(y[0]) < len(hypothesis_one_hot[0]):
                     y = np.array([np.concatenate((y[0], padding))])
                     state_below_pad = np.zeros((dif,), dtype="int32")
@@ -64,9 +63,14 @@ class OnlineTrainer:
                                                         mapping=self.mapping,
                                                         pad_sequences=True,
                                                         verbose=0)[0]
-            list2file(self.params_prediction['store_hypotheses'], [hypothesis + '\n'], permission='a')
+            # Apply detokenization function if needed
+            if self.params_prediction.get('apply_detokenization', False):
+                hypothesis_to_write = self.params_prediction['detokenize_f'](hypothesis)
+            else:
+                hypothesis_to_write = hypothesis
+            list2file(self.params_prediction['store_hypotheses'], [hypothesis_to_write + '\n'], permission='a')
             if self.verbose > 1:
-                logging.info('Hypothesis: %s' % str(hypothesis))
+                logging.info('Hypothesis: %s' % str(hypothesis_to_write))
 
         # 2. Post-edit this sample in order to match the reference --> Use y
         # 3. Update net parameters with the corrected samples
@@ -124,7 +128,9 @@ class OnlineTrainer:
                                      'store_hypotheses': None,
                                      'pos_unk': False,
                                      'heuristic': 0,
-                                     'mapping': None
+                                     'mapping': None,
+                                     'apply_detokenization': False,
+                                     'detokenize_f': 'detokenize_none'
                                      }
         default_params_training = {'batch_size': 1,
                                    'use_custom_loss': True,
