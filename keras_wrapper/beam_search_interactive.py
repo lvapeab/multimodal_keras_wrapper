@@ -247,14 +247,18 @@ class BeamSearchEnsemble:
 
         # Check input parameters and recover default values if needed
         default_params = {'batch_size': 50, 'n_parallel_loaders': 8, 'beam_size': 5,
-                          'normalize': False, 'mean_substraction': True,
-                          'predict_on_sets': ['val'], 'maxlen': 20, 'n_samples': -1,
+                          'normalize': False,
+                          'mean_substraction': True,
+                          'predict_on_sets': ['val'],
+                          'maxlen': 20,
+                          'n_samples': -1,
                           'model_inputs': ['source_text', 'state_below'],
                           'model_outputs': ['description'],
                           'dataset_inputs': ['source_text', 'state_below'],
                           'dataset_outputs': ['description'],
                           'alpha_factor': 1.0,
                           'sampling_type': 'max_likelihood',
+                          'normalize_probs': False,
                           'words_so_far': False,
                           'optimized_search': False,
                           'pos_unk': False,
@@ -346,7 +350,7 @@ class BeamSearchEnsemble:
                     for input_id in params['model_inputs']:
                         x[input_id] = np.asarray([X[input_id][i]])
                     samples, scores, alphas = self.beam_search(x, params, null_sym=self.dataset.extra_words['<null>'])
-                    if params['normalize']:
+                    if params['normalize_probs']:
                         counts = [len(sample)**params['alpha_factor'] for sample in samples]
                         scores = [co / cn for co, cn in zip(scores, counts)]
                     best_score = np.argmin(scores)
@@ -398,6 +402,7 @@ class BeamSearchEnsemble:
                           'dataset_outputs': ['description'],
                           'alpha_factor': 1.0,
                           'sampling_type': 'max_likelihood',
+                          'normalize_probs': False,
                           'words_so_far': False,
                           'optimized_search': False,
                           'state_below_index': -1,
@@ -424,7 +429,7 @@ class BeamSearchEnsemble:
         samples, unnormalized_scores, alphas = self.beam_search(x,
                                                                params,
                                                                null_sym=self.dataset.extra_words['<null>'])
-        if params['normalize']:
+        if params['normalize_probs']:
             counts = [len(sample)**params['alpha_factor'] for sample in samples]
             scores = [co / cn for co, cn in zip(unnormalized_scores, counts)]
             best_score_idx = np.argmin(scores)
