@@ -130,6 +130,7 @@ class OnlineTrainer:
                                      'heuristic': 0,
                                      'mapping': None,
                                      'apply_detokenization': False,
+                                     'normalize_probs': False,
                                      'detokenize_f': 'detokenize_none'
                                      }
         default_params_training = {'batch_size': 1,

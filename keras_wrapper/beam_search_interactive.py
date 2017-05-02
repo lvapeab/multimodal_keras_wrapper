@@ -1040,6 +1040,7 @@ class InteractiveBeamSearchSampler:
                           'heuristic': 0,
                           'mapping': None,
                           'apply_detokenization': False,
+                          'normalize_probs': False,
                           'detokenize_f': 'detokenize_none'
                           }
         params = self.checkParameters(self.params, default_params)
@@ -1063,7 +1064,7 @@ class InteractiveBeamSearchSampler:
                                                                isles=isles,
                                                                null_sym=self.dataset.extra_words['<null>'],
                                                                idx2word=idx2word)
-        if params['normalize']:
+        if params['normalize_probs']:
             counts = [len(sample)**params['alpha_factor'] for sample in samples]
             scores = [co / cn for co, cn in zip(unnormalized_scores, counts)]
             best_score_idx = np.argmin(scores)
