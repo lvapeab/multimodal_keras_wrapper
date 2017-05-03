@@ -199,7 +199,7 @@ class BeamSearchEnsemble:
                                              np.zeros((state_below.shape[0], params['maxlen'] - state_below.shape[1],
                                                        state_below.shape[2]))))
 
-            if params['optimized_search'] and ii > 0:
+            if self.optimized_search and ii > 0:
                 for n_model in range(len(self.models)):
                     # filter next search inputs w.r.t. remaining samples
                     for idx_vars in range(len(prev_outs[n_model])):
