@@ -25,14 +25,18 @@ class OnlineTrainer:
 
     def sample_and_train_online(self, X, Y, src_words=None):
         x = X[0]
-        state_below = X[1]
+        state_below_y = X[1]
         y = Y[0]
 
         # 1. Generate a sample with the current model
         trans_indices, costs, alphas = self.sampler.sample_beam_search(x[0])
+        state_below_h = np.asarray([np.append(self.dataset.extra_words['<null>'], trans_indices[:-1])])
 
         if self.params_training['use_custom_loss']:
-            hypothesis_one_hot = np.array([indices_2_one_hot(trans_indices, self.dataset.vocabulary_len["target_text"])])
+            hypothesis_one_hot = np.array([indices_2_one_hot(trans_indices,
+                                                             self.dataset.vocabulary_len["target_text"])])
+            costs_scorer_h = self.sampler.scoreSample([X, [hypothesis_one_hot]])[0]
+            costs_scorer_y = self.sampler.scoreSample([X, Y])[0]
 
             if len(hypothesis_one_hot[0]) != len(y[0]):
                 dif = abs(len(hypothesis_one_hot[0]) - len(y[0]))
@@ -41,9 +45,11 @@ class OnlineTrainer:
                 if len(y[0]) < len(hypothesis_one_hot[0]):
                     y = np.array([np.concatenate((y[0], padding))])
                     state_below_pad = np.zeros((dif,), dtype="int32")
-                    state_below = np.array([np.concatenate((state_below[0], state_below_pad))])
+                    state_below_y = np.array([np.concatenate((state_below_y[0], state_below_pad))])
                 else:
                     hypothesis_one_hot = np.array([np.concatenate((hypothesis_one_hot[0], padding))])
+                    state_below_pad = np.zeros((dif,), dtype="int32")
+                    state_below_h = np.array([np.concatenate((state_below_h[0], state_below_pad))])
 
         if self.params_prediction['pos_unk']:
             alphas = [alphas]
@@ -76,17 +82,21 @@ class OnlineTrainer:
         # 3. Update net parameters with the corrected samples
         for model in self.models:
             if self.params_training['use_custom_loss']:
-                weights = model.trainable_weights
+                model_train, model_y, model_h = model
+                weights = model_train.trainable_weights
                 weights.sort(key=lambda x: x.name if x.name else x.auto_name)
-                model.optimizer.set_weights(weights)
+                model_train.optimizer.set_weights(weights)
                 for k in range(1):
-                    loss_val = model.evaluate([x, state_below, y, hypothesis_one_hot],
-                                              np.zeros((y.shape[0], 1), dtype='float32'),
-                                              batch_size=1, verbose=0)
+                    y_pred = model_y.predict([x, state_below_y])
+                    h_pred = model_y.predict([x, state_below_h])
+
+                    # TODO: Fix loss val switcher
+                    loss_val = costs_scorer_y - costs_scorer_h
+                    print "loss_val: ",  loss_val
                     loss = 1.0 if loss_val > 0 else 0.0
-                    model.optimizer.loss_value.set_value(loss)
-                    model.fit([x, state_below, y, hypothesis_one_hot],
-                              np.zeros((y.shape[0], 1), dtype='float32'),
+                    model_train.optimizer.loss_value.set_value(loss)
+                    model_train.fit([x, state_below_h] + [y_pred, h_pred, y, hypothesis_one_hot],
+                              np.zeros((y.shape[0], 1), dtype='float32') + loss_val,
                               batch_size=min(self.params_training['batch_size'], len(x)),
                               nb_epoch=self.params_training['n_epochs'],
                               verbose=self.params_training['verbose'],
@@ -98,7 +108,7 @@ class OnlineTrainer:
                               sample_weight=None,
                               initial_epoch=0)
             else:
-                model.trainNetFromSamples([x, state_below], y, self.params_training)
+                model.trainNetFromSamples([x, state_below_y], y, self.params_training)
 
     def checkParameters(self, input_params, params_training=False):
         """
