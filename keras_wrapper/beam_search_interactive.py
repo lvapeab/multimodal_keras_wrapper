@@ -246,7 +246,9 @@ class BeamSearchEnsemble:
         """
 
         # Check input parameters and recover default values if needed
-        default_params = {'batch_size': 50, 'n_parallel_loaders': 8, 'beam_size': 5,
+        default_params = {'batch_size': 50,
+                          'n_parallel_loaders': 8,
+                          'beam_size': 5,
                           'normalize': False,
                           'mean_substraction': True,
                           'predict_on_sets': ['val'],
@@ -264,22 +266,21 @@ class BeamSearchEnsemble:
                           'pos_unk': False,
                           'heuristic': 0,
                           'mapping': None,
-                          'apply_detokenization': False,
-                          'detokenize_f': 'detokenize_none'
+                          'state_below_index': -1,
                           }
         params = self.checkParameters(self.params, default_params)
 
         predictions = dict()
         for s in params['predict_on_sets']:
-            logging.info("<<< Predicting outputs of "+s+" set >>>")
+            logging.info("<<< Predicting outputs of " + s + " set >>>")
             assert len(params['model_inputs']) > 0, 'We need at least one input!'
             if not params['optimized_search']:  # use optimized search model if available
                 assert not params['pos_unk'], 'PosUnk is not supported with non-optimized beam search methods'
             params['pad_on_batch'] = self.dataset.pad_on_batch[params['dataset_inputs'][-1]]
             # Calculate how many interations are we going to perform
             if params['n_samples'] < 1:
-                n_samples = eval("self.dataset.len_"+s)
-                num_iterations = int(math.ceil(float(n_samples)/params['batch_size']))
+                n_samples = eval("self.dataset.len_" + s)
+                num_iterations = int(math.ceil(float(n_samples) / params['batch_size']))
 
                 # Prepare data generator: We won't use an Homogeneous_Data_Batch_Generator here
                 # TODO: We prepare data as model 0... Different data preparators for each model?
@@ -294,7 +295,7 @@ class BeamSearchEnsemble:
                                                 predict=True).generator()
             else:
                 n_samples = params['n_samples']
-                num_iterations = int(math.ceil(float(n_samples)/params['batch_size']))
+                num_iterations = int(math.ceil(float(n_samples) / params['batch_size']))
 
                 # Prepare data generator: We won't use an Homogeneous_Data_Batch_Generator here
                 data_gen = Data_Batch_Generator(s,
@@ -410,8 +411,6 @@ class BeamSearchEnsemble:
                           'pos_unk': False,
                           'heuristic': 0,
                           'mapping': None,
-                          'apply_detokenization': False,
-                          'detokenize_f': 'detokenize_none'
                           }
         params = self.checkParameters(self.params, default_params)
         params['pad_on_batch'] = self.dataset.pad_on_batch[params['dataset_inputs'][-1]]
@@ -432,12 +431,14 @@ class BeamSearchEnsemble:
         if params['normalize_probs']:
             counts = [len(sample)**params['alpha_factor'] for sample in samples]
             scores = [co / cn for co, cn in zip(unnormalized_scores, counts)]
-            best_score_idx = np.argmin(scores)
-            best_sample = samples[best_score_idx]
-            if params['pos_unk']:
-                best_alphas = np.asarray(alphas[best_score_idx])
-            else:
-                best_alphas = None
+        else:
+            scores = unnormalized_scores
+        best_score_idx = np.argmin(scores)
+        best_sample = samples[best_score_idx]
+        if params['pos_unk']:
+            best_alphas = np.asarray(alphas[best_score_idx])
+        else:
+            best_alphas = None
 
         return np.asarray(best_sample), unnormalized_scores[best_score_idx], np.asarray(best_alphas)
 
@@ -454,7 +455,7 @@ class BeamSearchEnsemble:
             if key in valid_params:
                 params[key] = val
             else:
-                raise Exception("Parameter '" + key + "' is not a valid parameter.")
+                logging.warn("Unexpected parameter: '" + key + "'.")
 
         # Use default parameters if not provided
         for key, default_val in default_params.iteritems():
@@ -1039,9 +1040,7 @@ class InteractiveBeamSearchSampler:
                           'pos_unk': False,
                           'heuristic': 0,
                           'mapping': None,
-                          'apply_detokenization': False,
                           'normalize_probs': False,
-                          'detokenize_f': 'detokenize_none'
                           }
         params = self.checkParameters(self.params, default_params)
         params['pad_on_batch'] = self.dataset.pad_on_batch[params['dataset_inputs'][-1]]

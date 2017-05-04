@@ -248,7 +248,9 @@ class BeamSearchEnsemble:
                           'beam_size': 5,
                           'normalize': False,
                           'mean_substraction': True,
-                          'predict_on_sets': ['val'], 'maxlen': 20, 'n_samples': -1,
+                          'predict_on_sets': ['val'],
+                          'maxlen': 20,
+                          'n_samples': -1,
                           'model_inputs': ['source_text', 'state_below'],
                           'model_outputs': ['description'],
                           'dataset_inputs': ['source_text', 'state_below'],
@@ -261,7 +263,7 @@ class BeamSearchEnsemble:
                           'pos_unk': False,
                           'heuristic': 0,
                           'mapping': None,
-                          'state_below_index': -1
+                          'state_below_index': -1,
                           }
         params = self.checkParameters(self.params, default_params)
 
@@ -393,6 +395,66 @@ class BeamSearchEnsemble:
         else:
             return predictions, references, sources_sampling
 
+    def sample_beam_search(self, src_sentence):
+        """
+
+        :param src_sentence:
+        :return:
+        """
+        # Check input parameters and recover default values if needed
+        default_params = {'batch_size': 50,
+                          'n_parallel_loaders': 8,
+                          'beam_size': 5,
+                          'normalize': False,
+                          'mean_substraction': True,
+                          'predict_on_sets': ['val'],
+                          'maxlen': 20,
+                          'n_samples': 1,
+                          'model_inputs': ['source_text', 'state_below'],
+                          'model_outputs': ['description'],
+                          'dataset_inputs': ['source_text', 'state_below'],
+                          'dataset_outputs': ['description'],
+                          'alpha_factor': 1.0,
+                          'sampling_type': 'max_likelihood',
+                          'normalize_probs': False,
+                          'words_so_far': False,
+                          'optimized_search': False,
+                          'state_below_index': -1,
+                          'output_text_index': 0,
+                          'pos_unk': False,
+                          'heuristic': 0,
+                          'mapping': None
+                          }
+        params = self.checkParameters(self.params, default_params)
+        params['pad_on_batch'] = self.dataset.pad_on_batch[params['dataset_inputs'][-1]]
+        params['n_samples'] = 1
+        n_samples = params['n_samples']
+        if params['pos_unk']:
+            best_alphas = []
+
+        X = dict()
+        for input_id in params['model_inputs']:
+            X[input_id] = src_sentence
+        x = dict()
+        for input_id in params['model_inputs']:
+            x[input_id] = np.asarray([X[input_id]])
+        samples, unnormalized_scores, alphas = self.beam_search(x,
+                                                               params,
+                                                               null_sym=self.dataset.extra_words['<null>'])
+        if params['normalize_probs']:
+            counts = [len(sample)**params['alpha_factor'] for sample in samples]
+            scores = [co / cn for co, cn in zip(unnormalized_scores, counts)]
+        else:
+            scores = unnormalized_scores
+        best_score_idx = np.argmin(scores)
+        best_sample = samples[best_score_idx]
+        if params['pos_unk']:
+            best_alphas = np.asarray(alphas[best_score_idx])
+        else:
+            best_alphas = None
+
+        return np.asarray(best_sample), scores[best_score_idx], np.asarray(best_alphas)
+
     def score_cond_model(self, X, Y, params, null_sym=2):
         """
         Beam search method for Cond models.
@@ -510,14 +572,14 @@ class BeamSearchEnsemble:
                           'dataset_outputs': ['description'],
                           'alpha_factor': 1.0,
                           'sampling_type': 'max_likelihood',
-                          'normalize_probs': False,
                           'words_so_far': False,
                           'optimized_search': False,
                           'state_below_index': -1,
                           'output_text_index': 0,
                           'pos_unk': False,
                           'heuristic': 0,
-                          'mapping': None
+                          'mapping': None,
+                          'normalize_probs': False,
                           }
         params = self.checkParameters(self.params, default_params)
 
@@ -593,6 +655,87 @@ class BeamSearchEnsemble:
             scores_dict[s] = scores
         return scores_dict
 
+    def scoreSample(self, data):
+        """
+        Approximates by beam search the best predictions of the net on the dataset splits chosen.
+        Params from config that affect the sarch process:
+            * batch_size: size of the batch
+            * n_parallel_loaders: number of parallel data batch loaders
+            * normalization: apply data normalization on images/features or not (only if using images/features as input)
+            * mean_substraction: apply mean data normalization on images or not (only if using images as input)
+            * predict_on_sets: list of set splits for which we want to extract the predictions ['train', 'val', 'test']
+            * optimized_search: boolean indicating if the used model has the optimized Beam Search implemented
+             (separate self.model_init and self.model_next models for reusing the information from previous timesteps).
+
+        The following attributes must be inserted to the model when building an optimized search model:
+
+            * ids_inputs_init: list of input variables to model_init (must match inputs to conventional model)
+            * ids_outputs_init: list of output variables of model_init (model probs must be the first output)
+            * ids_inputs_next: list of input variables to model_next (previous word must be the first input)
+            * ids_outputs_next: list of output variables of model_next (model probs must be the first output and
+                                the number of out variables must match the number of in variables)
+            * matchings_init_to_next: dictionary from 'ids_outputs_init' to 'ids_inputs_next'
+            * matchings_next_to_next: dictionary from 'ids_outputs_next' to 'ids_inputs_next'
+
+        :returns predictions: dictionary with set splits as keys and matrices of predictions as values.
+        """
+
+        # Check input parameters and recover default values if needed
+        default_params = {'batch_size': 50,
+                          'n_parallel_loaders': 8,
+                          'beam_size': 5,
+                          'normalize': False,
+                          'mean_substraction': True,
+                          'predict_on_sets': ['val'],
+                          'maxlen': 20,
+                          'n_samples': -1,
+                          'pad_on_batch': True,
+                          'model_inputs': ['source_text', 'state_below'],
+                          'model_outputs': ['description'],
+                          'dataset_inputs': ['source_text', 'state_below'],
+                          'dataset_outputs': ['description'],
+                          'alpha_factor': 1.0,
+                          'sampling_type': 'max_likelihood',
+                          'normalize_probs': False,
+                          'words_so_far': False,
+                          'optimized_search': False,
+                          'state_below_index': -1,
+                          'output_text_index': 0,
+                          'pos_unk': False,
+                          'heuristic': 0,
+                          'mapping': None
+                          }
+        params = self.checkParameters(self.params, default_params)
+
+        scores = []
+        total_cost = 0
+        sampled = 0
+        X = dict()
+        for i, input_id in enumerate(params['model_inputs']):
+            X[input_id] = data[0][i]
+        Y = dict()
+        for i, output_id in enumerate(params['model_outputs']):
+            Y[output_id] = data[1][i]
+
+        for i in range(len(X[params['model_inputs'][0]])):
+            sampled += 1
+            x = dict()
+            y = dict()
+
+            for input_id in params['model_inputs']:
+                x[input_id] = np.asarray([X[input_id][i]])
+            y = one_hot_2_indices([Y[params['dataset_outputs'][params['output_text_index']]][i]],
+                                  pad_sequences=params['pad_on_batch'], verbose=0)[0]
+            score = self.score_cond_model(x, y,
+                                          params,
+                                          null_sym=self.dataset.extra_words['<null>'])
+            if params['normalize_probs']:
+                counts = float(len(y) ** params['alpha_factor'])
+                score /= counts
+            scores.append(score)
+            total_cost += score
+        return scores
+
     def BeamSearchNet(self):
         """
         DEPRECATED, use predictBeamSearchNet() instead.
@@ -612,8 +755,6 @@ class BeamSearchEnsemble:
         for key, val in input_params.iteritems():
             if key in valid_params:
                 params[key] = val
-            else:
-                raise Exception("Parameter '" + key + "' is not a valid parameter.")
 
         # Use default parameters if not provided
         for key, default_val in default_params.iteritems():
