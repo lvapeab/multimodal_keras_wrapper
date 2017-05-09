@@ -4,6 +4,7 @@ import numpy as np
 from keras_wrapper.extra.read_write import list2file
 from keras_wrapper.utils import indices_2_one_hot, decode_predictions_beam_search
 
+import sklearn
 
 class OnlineTrainer:
     def __init__(self, models, dataset, sampler, params_prediction, params_training, verbose=0):
@@ -35,8 +36,8 @@ class OnlineTrainer:
         if self.params_training['use_custom_loss']:
             hypothesis_one_hot = np.array([indices_2_one_hot(trans_indices,
                                                              self.dataset.vocabulary_len["target_text"])])
-            costs_scorer_h = self.sampler.scoreSample([X, [hypothesis_one_hot]])[0]
-            costs_scorer_y = self.sampler.scoreSample([X, Y])[0]
+            #print "costs_scorer_h = ", self.sampler.scoreSample([X, [hypothesis_one_hot]])[0]
+            #print "costs_scorer_y = ", self.sampler.scoreSample([X, Y])[0]
 
             if len(hypothesis_one_hot[0]) != len(y[0]):
                 dif = abs(len(hypothesis_one_hot[0]) - len(y[0]))
@@ -89,17 +90,23 @@ class OnlineTrainer:
                 for k in range(1):
                     y_pred = model_y.predict([x, state_below_y])
                     h_pred = model_y.predict([x, state_below_h])
-
-                    # TODO: Fix loss val switcher
-                    loss_val = costs_scorer_y - costs_scorer_h
-                    print "loss_val: ",  loss_val
+                    #print "--Numpy logloss--"
+                    #print "log_loss(y, y_pred)", sklearn.metrics.log_loss(y[0], y_pred[0])
+                    #print "log_loss(h, h_pred)", sklearn.metrics.log_loss(hypothesis_one_hot[0], h_pred[0])
+                    #print "-----------------"
+                    #print "Evaluating model_train.evaluate(state_below_h)"
+                    loss_val = model_train.evaluate([x, state_below_y] + [y_pred, h_pred, y, hypothesis_one_hot],
+                                                    np.zeros((y.shape[0], 1), dtype='float32'),
+                                                    batch_size=1)
+                    #print "log_loss (theano)", loss_val
                     loss = 1.0 if loss_val > 0 else 0.0
                     model_train.optimizer.loss_value.set_value(loss)
-                    model_train.fit([x, state_below_h] + [y_pred, h_pred, y, hypothesis_one_hot],
-                              np.zeros((y.shape[0], 1), dtype='float32') + loss_val,
+                    model_train.fit([x, state_below_y] +
+                                    [y_pred, h_pred, y, hypothesis_one_hot],
+                              np.zeros((y.shape[0], 1), dtype='float32'),
                               batch_size=min(self.params_training['batch_size'], len(x)),
                               nb_epoch=self.params_training['n_epochs'],
-                              verbose=self.params_training['verbose'],
+                              verbose=0,#self.params_training['verbose'],
                               callbacks=[],
                               validation_data=None,
                               validation_split=self.params_training.get('val_split', 0.),
@@ -107,6 +114,15 @@ class OnlineTrainer:
                               class_weight=None,
                               sample_weight=None,
                               initial_epoch=0)
+                    # ONLY FOR DEBUGGING
+                    """
+                    h_pred = model_y.predict([x, state_below_h])
+                    model_train.evaluate([x, state_below_y] +
+                                         [y_pred, h_pred, y, hypothesis_one_hot],
+                                         np.zeros((y.shape[0], 1), dtype='float32'),
+                                         batch_size=1,
+                                         verbose=0)
+                    """
             else:
                 model.trainNetFromSamples([x, state_below_y], y, self.params_training)
 
