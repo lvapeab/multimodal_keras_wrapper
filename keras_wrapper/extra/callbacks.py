@@ -30,6 +30,7 @@ def checkDefaultParamsBeamSearch(params):
                       'pos_unk': False,
                       'heuristic': 0,
                       'mapping': None,
+                      'max_eval_samples': None,
                       'normalize_probs': False,
                       'alpha_factor': 0.0,
                       'coverage_penalty': False,
@@ -62,6 +63,7 @@ class EvalPerformance(KerasCallback):
                  set_name,
                  batch_size,
                  each_n_epochs=1,
+                 max_eval_samples=None,
                  extra_vars=dict(),
                  normalize=False,
                  is_text=False,
@@ -73,6 +75,7 @@ class EvalPerformance(KerasCallback):
                  index2word_x=None,
                  sampling='max_likelihood',
                  beam_search=False,
+                 beam_batch_size=None,
                  write_samples=False,
                  save_path='logs/performance.',
                  reload_epoch=0,
@@ -92,9 +95,10 @@ class EvalPerformance(KerasCallback):
         :param dataset: instance of the class Dataset in keras_wrapper.dataset
         :param gt_id: identifier in the Dataset instance of the output data to evaluate
         :param metric_name: name of the performance metric
-        :param set_name:  name of the set split that will be evaluated
+        :param set_name: list with the names of the set splits that will be evaluated
         :param batch_size: batch size used during sampling
         :param each_n_epochs: sampling each this number of epochs or updates
+        :param max_eval_samples: maximum number of samples evaluated
         :param extra_vars: dictionary of extra variables. See evaluation metrics in keras_wrapper/extra/evaluation.py for assigning the needed extra variables.
         :param normalize: switch on/off data normalization
         :param is_text: defines if the predicted info is of type text (in that case the data will be converted from values into a textual representation)
@@ -106,6 +110,7 @@ class EvalPerformance(KerasCallback):
         :param index2word_x: mapping from the indices to words (only needed if is_text==True)
         :param sampling: sampling mechanism used (only used if is_text==True)
         :param beam_search: whether to use a beam search method or not
+        :param beam_batch_size: batch size allowed during beam search
         :param write_samples: flag for indicating if we want to write the predicted data in a text file
         :param save_path: path to dumb the logs
         :param reload_epoch: reloading epoch
@@ -132,8 +137,10 @@ class EvalPerformance(KerasCallback):
         self.is_3DLabel = is_3DLabel
         self.sampling = sampling
         self.beam_search = beam_search
+        self.beam_batch_size = beam_batch_size
         self.metric_name = metric_name
         self.set_name = set_name
+        self.max_eval_samples = max_eval_samples
         self.batch_size = batch_size
         self.each_n_epochs = each_n_epochs
         self.extra_vars = extra_vars
@@ -155,7 +162,7 @@ class EvalPerformance(KerasCallback):
         self.save_each_evaluation = save_each_evaluation
         self.written_header = False
         create_dir_if_not_exists(self.save_path)
-        super(PrintPerformanceMetricOnEpochEndOrEachNUpdates, self).__init__()
+        super(EvalPerformance, self).__init__()
 
     def on_epoch_end(self, epoch, logs={}):
         """
@@ -195,21 +202,26 @@ class EvalPerformance(KerasCallback):
         for s in self.set_name:
             # Apply model predictions
             if self.beam_search:
-                params_prediction = {'max_batch_size': self.batch_size,
-                                     'n_parallel_loaders': self.extra_vars['n_parallel_loaders'],
-                                     'predict_on_sets': [s],
-                                     'pos_unk': False,
-                                     'heuristic': 0,
-                                     'mapping': None,
-                                     'normalize': self.normalize}
-                params_prediction.update(checkDefaultParamsBeamSearch(self.extra_vars))
+                params_prediction = checkDefaultParamsBeamSearch(self.extra_vars)
+                params_prediction.update({   'max_batch_size': self.batch_size,
+                                             'n_parallel_loaders': self.extra_vars['n_parallel_loaders'],
+                                             'predict_on_sets': [s],
+                                             'beam_batch_size': self.beam_batch_size if self.beam_batch_size is not None else self.batch_size,
+                                             'pos_unk': False,
+                                             'heuristic': 0,
+                                             'mapping': None,
+                                             'normalize': self.normalize,
+                                             'max_eval_samples': self.max_eval_samples}
+                                         )
+
                 predictions = self.model_to_eval.predictBeamSearchNet(self.ds, params_prediction)[s]
             else:
                 orig_size = self.extra_vars.get('eval_orig_size', False)
                 params_prediction = {'batch_size': self.batch_size,
                                      'n_parallel_loaders': self.extra_vars.get('n_parallel_loaders', 8),
                                      'predict_on_sets': [s],
-                                     'normalize': self.normalize}
+                                     'normalize': self.normalize,
+                                     'max_eval_samples': self.max_eval_samples}
                 # Convert predictions
                 postprocess_fun = None
                 if self.is_3DLabel:
@@ -376,7 +388,8 @@ class Sample(KerasCallback):
     def __init__(self, model, dataset, gt_id, set_name, n_samples, each_n_updates=10000, extra_vars=None,
                  is_text=False, index2word_x=None, index2word_y=None, input_text_id=None, print_sources=False,
                  sampling='max_likelihood', temperature=1.,
-                 beam_search=False, batch_size=50, reload_epoch=0, start_sampling_on_epoch=0, is_3DLabel=False,
+                 beam_search=False, beam_batch_size=None, 
+                 batch_size=50, reload_epoch=0, start_sampling_on_epoch=0, is_3DLabel=False,
                  write_type='list', sampling_type='max_likelihood', out_pred_idx=None, in_pred_idx=None, verbose=1):
         """
             :param model: model to evaluate
@@ -410,6 +423,7 @@ class Sample(KerasCallback):
         self.is_text = is_text
         self.sampling = sampling
         self.beam_search = beam_search
+        self.beam_batch_size = beam_batch_size
         self.batch_size = batch_size
         self.set_name = set_name
         self.n_samples = n_samples
@@ -427,7 +441,7 @@ class Sample(KerasCallback):
         self.epoch_count = 0
         self.print_sources = print_sources
         self.verbose = verbose
-        super(SampleEachNUpdates, self).__init__()
+        super(Sample, self).__init__()
 
     def on_epoch_end(self, n_epoch, logs={}):
         self.epoch_count += 1
@@ -442,6 +456,14 @@ class Sample(KerasCallback):
         # Evaluate on each set separately
         for s in self.set_name:
             # Apply model predictions
+            params_prediction = {'batch_size': self.batch_size,
+                                 'beam_batch_size': self.beam_batch_size if self.beam_batch_size is not None else self.batch_size,
+                                 'n_parallel_loaders': self.extra_vars['n_parallel_loaders'],
+                                 'predict_on_sets': [s],
+                                 'n_samples': self.n_samples,
+                                 'pos_unk': False,
+                                 'heuristic': 0,
+                                 'mapping': None}
             if self.beam_search:
                 params_prediction = {'max_batch_size': self.batch_size,
                      'n_parallel_loaders': self.extra_vars['n_parallel_loaders'],
@@ -566,10 +588,16 @@ class EarlyStopping(KerasCallback):
         self.cum_update = 0
         # check already stored scores in case we have loaded a pre-trained model
         all_scores = self.model_to_eval.getLog(self.check_split, self.metric_check)
-        all_epochs = self.model_to_eval.getLog(self.check_split, 'epoch')
+        if self.eval_on_epochs:
+            all_epochs = self.model_to_eval.getLog(self.check_split, 'epoch')
+        else:
+            all_epochs = self.model_to_eval.getLog(self.check_split, 'iteration')
+
         if all_scores[-1] is not None:
             self.best_score = max(all_scores)
-            self.best_epoch = all_epochs[all_scores.index(self.best_score)]
+            best_score_check = str(self.best_score)[:8]
+            all_scores_check = [str(score)[:8] for score in all_scores]
+            self.best_epoch = all_epochs[all_scores_check.index(best_score_check)]
             self.wait = max(all_epochs) - self.best_epoch
         else:
             self.best_score = -1.
