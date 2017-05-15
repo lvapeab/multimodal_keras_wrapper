@@ -5,7 +5,7 @@ import numpy as np
 
 from keras_wrapper.extra.read_write import list2file
 from keras_wrapper.utils import indices_2_one_hot, decode_predictions_beam_search
-
+from sklearn.metrics import log_loss
 
 class OnlineTrainer:
     def __init__(self, models, dataset, sampler, params_prediction, params_training, verbose=0):
@@ -35,23 +35,10 @@ class OnlineTrainer:
         state_below_h = np.asarray([np.append(self.dataset.extra_words['<null>'], trans_indices[:-1])])
 
         if self.params_training['use_custom_loss']:
-            hypothesis_one_hot = np.array([indices_2_one_hot(trans_indices,
-                                                             self.dataset.vocabulary_len["target_text"])])
+            hyp = np.array([indices_2_one_hot(trans_indices,
+                           self.dataset.vocabulary_len["target_text"])])
             # print "costs_scorer_h = ", self.sampler.scoreSample([X, [hypothesis_one_hot]])[0]
             # print "costs_scorer_y = ", self.sampler.scoreSample([X, Y])[0]
-
-            if len(hypothesis_one_hot[0]) != len(y[0]):
-                dif = abs(len(hypothesis_one_hot[0]) - len(y[0]))
-                padding = np.zeros((dif, self.dataset.vocabulary_len["target_text"]))
-
-                if len(y[0]) < len(hypothesis_one_hot[0]):
-                    y = np.array([np.concatenate((y[0], padding))])
-                    state_below_pad = np.zeros((dif,), dtype="int32")
-                    state_below_y = np.array([np.concatenate((state_below_y[0], state_below_pad))])
-                else:
-                    hypothesis_one_hot = np.array([np.concatenate((hypothesis_one_hot[0], padding))])
-                    state_below_pad = np.zeros((dif,), dtype="int32")
-                    state_below_h = np.array([np.concatenate((state_below_h[0], state_below_pad))])
 
         if self.params_prediction['pos_unk']:
             alphas = [alphas]
@@ -84,33 +71,33 @@ class OnlineTrainer:
         # 3. Update net parameters with the corrected samples
         for model in self.models:
             if self.params_training['use_custom_loss']:
-                model_train, model_predict = model
-                weights = model_train.trainable_weights
+                weights = model.trainable_weights
                 weights.sort(key=lambda x: x.name if x.name else x.auto_name)
-                model_train.optimizer.set_weights(weights)
+                model.optimizer.set_weights(weights)
                 for k in range(1):
-                    y_pred = model_predict.predict([x, state_below_y])
-                    h_pred = model_predict.predict([x, state_below_h])
-
-                    loss_val = model_train.evaluate([x, state_below_y] + [y_pred, h_pred, y, hypothesis_one_hot],
-                                                    np.zeros((y.shape[0], 1), dtype='float32'),
-                                                    batch_size=1)
+                    loss_val = model.evaluate([x, state_below_y, state_below_h] + [y, hyp],
+                                              np.zeros((y.shape[0], 1), dtype='float32'),
+                                              batch_size=1, verbose=0)
                     loss = 1.0 if loss_val > 0 else 0.0
-                    model_train.optimizer.loss_value.set_value(loss)
+                    model.optimizer.loss_value.set_value(loss)
 
-                    model_train.fit([x, state_below_y] +
-                                    [y_pred, h_pred, y, hypothesis_one_hot],
-                                    np.zeros((y.shape[0], 1), dtype='float32'),
-                                    batch_size=min(self.params_training['batch_size'], len(x)),
-                                    nb_epoch=self.params_training['n_epochs'],
-                                    verbose=self.params_training['verbose'],
-                                    callbacks=[],
-                                    validation_data=None,
-                                    validation_split=self.params_training.get('val_split', 0.),
-                                    shuffle=self.params_training['shuffle'],
-                                    class_weight=None,
-                                    sample_weight=None,
-                                    initial_epoch=0)
+                    model.fit([x, state_below_y, state_below_h] +
+                              [y, hyp],
+                              np.zeros((y.shape[0], 1), dtype='float32'),
+                              batch_size=min(self.params_training['batch_size'], len(x)),
+                              nb_epoch=self.params_training['n_epochs'],
+                              verbose=self.params_training['verbose'],
+                              callbacks=[],
+                              validation_data=None,
+                              validation_split=self.params_training.get('val_split', 0.),
+                              shuffle=self.params_training['shuffle'],
+                              class_weight=None,
+                              sample_weight=None,
+                              initial_epoch=0)
+
+                    model.evaluate([x, state_below_y, state_below_h] + [y, hyp],
+                                   np.zeros((y.shape[0], 1), dtype='float32'),
+                                   batch_size=1, verbose=0)
             else:
                 model.trainNetFromSamples([x, state_below_y], y, self.params_training)
 
