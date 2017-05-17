@@ -91,16 +91,16 @@ class OnlineTrainer:
                               sample_weight=None,
                               initial_epoch=0)
                     """
-                    Only for debugging
+                    # Only for debugging
                     model.evaluate(train_inputs,
                                    np.zeros((y.shape[0], 1), dtype='float32'),
                                    batch_size=1, verbose=0)
                     """
             else:
-                p = copy.copy(self.params_training)
-                del p['use_custom_loss']
-                del p['custom_loss']
-                model.trainNetFromSamples([x, state_below_y], y, p)
+                params = copy.copy(self.params_training)
+                del params['use_custom_loss']
+                del params['custom_loss']
+                model.trainNetFromSamples([x, state_below_y], y, params)
 
     def checkParameters(self, input_params, params_training=False):
         """
