@@ -1,12 +1,11 @@
 # -*- coding: utf-8 -*-
 import logging
-
 import numpy as np
-
 from keras_wrapper.extra.read_write import list2file
 from keras_wrapper.utils import indices_2_one_hot, decode_predictions_beam_search
-from sklearn.metrics import log_loss
 import copy
+
+
 class OnlineTrainer:
     def __init__(self, models, dataset, sampler, params_prediction, params_training, verbose=0):
         """
@@ -34,22 +33,9 @@ class OnlineTrainer:
         trans_indices, costs, alphas = self.sampler.sample_beam_search(x[0])
         state_below_h = np.asarray([np.append(self.dataset.extra_words['<null>'], trans_indices[:-1])])
 
-        if self.params_training.get('use_custom_loss',False):
+        if self.params_training.get('use_custom_loss', False):
             hyp = np.array([indices_2_one_hot(trans_indices, self.dataset.vocabulary_len["target_text"])])
-            """
-            if not self.params_training['h_y_optimization']:
-                if len(hyp[0]) != len(y[0]):
-                    dif = abs(len(hyp[0]) - len(y[0]))
-                    padding = np.zeros((dif, self.dataset.vocabulary_len["target_text"]))
-                    if len(y[0]) < len(hyp[0]):
-                        y = np.array([np.concatenate((y[0], padding))])
-                        state_below_pad = np.zeros((dif,), dtype="int32")
-                        state_below_y = np.array([np.concatenate((state_below_y[0], state_below_pad))])
-                    else:
-                        hyp = np.array([np.concatenate((hyp[0], padding))])
-                        state_below_pad = np.zeros((dif,), dtype="int32")
-                        state_below_h = np.array([np.concatenate((state_below_h[0], state_below_pad))])
-            """
+
         if self.params_prediction['pos_unk']:
             alphas = [alphas]
             sources = [x] if not src_words else src_words
@@ -81,23 +67,15 @@ class OnlineTrainer:
         # 3. Update net parameters with the corrected samples
         for model in self.models:
             if self.params_training.get('use_custom_loss', False):
-                if not self.params_training['h_y_optimization']:
-                    model, model_predict = model
                 weights = model.trainable_weights
                 weights.sort(key=lambda x: x.name if x.name else x.auto_name)
                 model.optimizer.set_weights(weights)
                 for k in range(1):
-                    if self.params_training['h_y_optimization']:
-                        evaluation_inputs = [x, state_below_y, state_below_h] + [y, hyp]
-                        train_inputs = [x, state_below_y, state_below_h] + [y, hyp]
-                    else:
-                        h_pred = model_predict.predict([x, state_below_h])
-                        evaluation_inputs = [x, state_below_y] + [h_pred, y, hyp]
-                        train_inputs = [x, state_below_y] + [h_pred, y, hyp]
+                    train_inputs = [x, state_below_y, state_below_h] + [y, hyp]
 
-                    loss_val = model.evaluate(evaluation_inputs,
+                    loss_val = model.evaluate(train_inputs,
                                               np.zeros((y.shape[0], 1), dtype='float32'),
-                                              batch_size=1)
+                                              batch_size=1, verbose=0)
                     loss = 1.0 if loss_val > 0 else 0.0
                     model.optimizer.loss_value.set_value(loss)
                     model.fit(train_inputs,
@@ -114,14 +92,13 @@ class OnlineTrainer:
                               initial_epoch=0)
                     """
                     Only for debugging
-                    model.evaluate([x, state_below_y, state_below_h] + [y, hyp],
+                    model.evaluate(train_inputs,
                                    np.zeros((y.shape[0], 1), dtype='float32'),
                                    batch_size=1, verbose=0)
                     """
             else:
                 p = copy.copy(self.params_training)
                 del p['use_custom_loss']
-                del p['h_y_optimization']
                 del p['custom_loss']
                 model.trainNetFromSamples([x, state_below_y], y, p)
 
@@ -160,7 +137,6 @@ class OnlineTrainer:
                                      }
         default_params_training = {'batch_size': 1,
                                    'use_custom_loss': False,
-                                   'h_y_optimization': True,
                                    'custom_loss': False,
                                    'n_parallel_loaders': 8,
                                    'n_epochs': 1,
