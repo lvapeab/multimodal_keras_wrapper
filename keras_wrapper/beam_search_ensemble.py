@@ -464,10 +464,10 @@ class BeamSearchEnsemble:
         params = self.checkParameters(self.params, default_params)
         params['pad_on_batch'] = self.dataset.pad_on_batch[params['dataset_inputs'][-1]]
         params['n_samples'] = 1
-        n_samples = params['n_samples']
-        if params['pos_unk']:
-            best_alphas = []
-
+        if self.n_best:
+            n_best_list = []
+            if self.return_alphas:
+                n_best_alphas = []
         X = dict()
         for input_id in params['model_inputs']:
             X[input_id] = src_sentence
@@ -507,14 +507,26 @@ class BeamSearchEnsemble:
             counts = [len(sample) ** params['alpha_factor'] for sample in samples]
             scores = [co / cn for co, cn in zip(scores, counts)]
 
+        if self.n_best:
+            n_best_indices = np.argsort(scores)
+            n_best_scores = np.asarray(scores)[n_best_indices]
+            n_best_samples = np.asarray(samples)[n_best_indices]
+            if alphas is not None:
+                n_best_alphas = np.asarray(n_best_alphas)[n_best_indices]
+            else:
+                n_best_alphas = [None] * len(n_best_indices)
+            n_best_list.append([n_best_samples, n_best_scores, n_best_alphas])
+
         best_score_idx = np.argmin(scores)
         best_sample = samples[best_score_idx]
         if params['pos_unk']:
             best_alphas = np.asarray(alphas[best_score_idx])
         else:
             best_alphas = None
-
-        return np.asarray(best_sample), scores[best_score_idx], np.asarray(best_alphas)
+        if self.n_best:
+            return (np.asarray(best_sample), scores[best_score_idx], np.asarray(best_alphas)), n_best_list
+        else:
+            return np.asarray(best_sample), scores[best_score_idx], np.asarray(best_alphas)
 
     def score_cond_model(self, X, Y, params, null_sym=2):
         """
