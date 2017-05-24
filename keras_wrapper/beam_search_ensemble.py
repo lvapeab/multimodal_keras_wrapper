@@ -282,7 +282,6 @@ class BeamSearchEnsemble:
                           'coverage_norm_factor': 0.0
                           }
         params = self.checkParameters(self.params, default_params)
-        print params
         predictions = dict()
         for s in params['predict_on_sets']:
             logging.info("\n <<< Predicting outputs of " + s + " set >>>")
@@ -401,7 +400,7 @@ class BeamSearchEnsemble:
                         n_best_scores = np.asarray(scores)[n_best_indices]
                         n_best_samples = np.asarray(samples)[n_best_indices]
                         if alphas is not None:
-                            n_best_alphas = np.asarray(n_best_alphas)[n_best_indices]
+                            n_best_alphas = [np.stack(alphas[i]) for i in n_best_indices]
                         else:
                             n_best_alphas = [None] * len(n_best_indices)
                         n_best_list.append([n_best_samples, n_best_scores, n_best_alphas])
@@ -462,6 +461,7 @@ class BeamSearchEnsemble:
                           'optimized_search': False,
                           'state_below_index': -1,
                           'output_text_index': 0,
+                          'search_pruning': False,
                           'pos_unk': False,
                           'heuristic': 0,
                           'mapping': None,
@@ -523,7 +523,7 @@ class BeamSearchEnsemble:
             n_best_scores = np.asarray(scores)[n_best_indices]
             n_best_samples = np.asarray(samples)[n_best_indices]
             if alphas is not None:
-                n_best_alphas = np.asarray(n_best_alphas)[n_best_indices]
+                n_best_alphas = [np.stack(alphas[i]) for i in n_best_indices]
             else:
                 n_best_alphas = [None] * len(n_best_indices)
             n_best_list.append([n_best_samples, n_best_scores, n_best_alphas])
