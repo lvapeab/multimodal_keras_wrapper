@@ -7,6 +7,7 @@ import copy
 
 
 class OnlineTrainer:
+
     def __init__(self, models, dataset, sampler, params_prediction, params_training, verbose=0):
         """
 
@@ -22,6 +23,7 @@ class OnlineTrainer:
         self.params_training = self.checkParameters(params_training, params_training=True)
         self.index2word_y = self.dataset.vocabulary[params_prediction['dataset_outputs'][0]]['idx2words']
         self.mapping = None if self.dataset.mapping == dict() else self.dataset.mapping
+        self.n_updates = 0
         if self.params_prediction['n_best_optimizer']:
             from pycocoevalcap.sentence_bleu.sentence_bleu import SentenceBleuScorer
             self.sentence_scorer = SentenceBleuScorer('')
@@ -33,7 +35,7 @@ class OnlineTrainer:
 
         # 1. Generate a sample with the current model
         if self.params_prediction['n_best_optimizer']:
-            self.sentence_scorer.set_reference(trg_words[0].split())
+            self.sentence_scorer.set_reference(str(trg_words[0]).split())
             [trans_indices, costs, alphas], n_best = self.sampler.sample_beam_search(x[0])
 
         else:
@@ -71,75 +73,74 @@ class OnlineTrainer:
                 logging.info('Hypothesis: %s' % str(hypothesis_to_write))
 
         if self.params_prediction['n_best_optimizer']:
+            if self.verbose > 0:
+                print ""
+                print "\tReference: ", trg_words[0]
             for n_best_preds, n_best_scores, n_best_alphas in n_best:
-                n_best_sample_score = []
-                print ""
-                print ""
-                print ""
-                print "Reference: ", trg_words[0]
                 n_best_predictions = []
                 for i, (n_best_pred, n_best_score, n_best_alpha) in enumerate(zip(n_best_preds,
                                                                                 n_best_scores,
                                                                                 n_best_alphas)):
                     pred = decode_predictions_beam_search([n_best_pred],
                                                           self.index2word_y,
-                                                          alphas=n_best_alpha,
+                                                          alphas=[n_best_alpha],
                                                           x_text=sources,
                                                           heuristic=heuristic,
                                                           mapping=self.mapping,
+                                                          pad_sequences=True,
                                                           verbose=0)
                     # Apply detokenization function if needed
                     if self.params_prediction.get('apply_detokenization', False):
                         pred = map(self.params_prediction['detokenize_f'], pred)
+
                     if self.sentence_scorer is not None:
-                        score = self.sentence_scorer.score(pred[0].split())
+                        # We are always minimizing, therefore, we use 1 - BLEU as score.
+                        score = 1. - self.sentence_scorer.score(pred[0].split())
                     else:
                         score = n_best_score
-                    n_best_sample_score.append([i, pred, score])
-                n_best_predictions.append(n_best_sample_score)
-            print n_best_predictions
+                    n_best_predictions.append([i, n_best_pred, pred, score])
             for model in self.models:
                 weights = model.trainable_weights
                 weights.sort(key=lambda x: x.name if x.name else x.auto_name)
                 model.optimizer.set_weights(weights)
+                top_prob_h = np.asarray(n_best_predictions[0][1])
+                p = np.argsort([nbest[3] for nbest in n_best_predictions])
+                if p[0] == 0:
+                    if self.verbose > 0:
+                        print "The top-prob hypothesis and the top bleu hypothesis match"
+                else:
+                    if self.verbose:
+                        print "The top-prob hypothesis and the top bleu hypothesis don't match"
+                        print "top-prob h:", n_best_predictions[0][2][0], "Bleu:", 1-n_best_predictions[0][-1]
+                        print "top_bleu_h", n_best_predictions[p[0]][2][0], "Bleu:", 1-n_best_predictions[p[0]][-1]
+                        print "Updating..."
 
-                for k in range(1):
-                    B = [nbest[2] for nbest in n_best_predictions[0]]
-                    p = np.argsort([nbest[2] for nbest in n_best_predictions[0]])
-                    print "p", p
-                    for i, hypothesis, score in n_best_predictions[0]:
-                        print i,"-", hypothesis, "-", score
-                    N = len(n_best_predictions[0])
-                    for i in range(N):
-                        for j in range(0, N):
-                            if B[i] > B[p[j]]:
-                                print "Update:"
-                                print "\t i:", i
-                                print "\t j:", j
-                                print "\t ", n_best_predictions[0][i], "should be better than", n_best_predictions[0][p[j]]
+                    top_bleu_h = np.asarray(n_best_predictions[p[0]][1])
+                    state_below_top_prob_h = np.asarray([np.append(self.dataset.extra_words['<null>'],
+                                                                   top_prob_h[:-1])])
+                    state_below_top_bleu_h = np.asarray([np.append(self.dataset.extra_words['<null>'],
+                                                                   top_bleu_h[:-1])])
+                    top_prob_h = np.array([indices_2_one_hot(top_prob_h,
+                                                             self.dataset.vocabulary_len["target_text"])])
+                    top_bleu_h = np.array([indices_2_one_hot(top_bleu_h,
+                                                             self.dataset.vocabulary_len["target_text"])])
 
-                    train_inputs = [x, state_below_y, state_below_h] + [y, hyp]
-
-                    loss_val = model.evaluate(train_inputs,
-                                              np.zeros((y.shape[0], 1), dtype='float32'),
-                                              batch_size=1, verbose=0)
-                    loss = 1.0 if loss_val > 0 else 0.0
-                    model.optimizer.loss_value.set_value(loss)
-                    model.fit(train_inputs,
-                              np.zeros((y.shape[0], 1), dtype='float32'),
-                              batch_size=min(self.params_training['batch_size'], len(x)),
-                              nb_epoch=self.params_training['n_epochs'],
-                              verbose=self.params_training['verbose'],
-                              callbacks=[],
-                              validation_data=None,
-                              validation_split=self.params_training.get('val_split', 0.),
-                              shuffle=self.params_training['shuffle'],
-                              class_weight=None,
-                              sample_weight=None,
-                              initial_epoch=0)
-
-
-
+                    train_inputs = [x, state_below_top_bleu_h, state_below_top_prob_h] + [top_bleu_h, top_prob_h]
+                    model.optimizer.loss_value.set_value(1.0)
+                for k in range(3):
+                        model.fit(train_inputs,
+                                  np.zeros((state_below_top_prob_h.shape[0], 1), dtype='float32'),
+                                  batch_size=min(self.params_training['batch_size'], len(x)),
+                                  nb_epoch=self.params_training['n_epochs'],
+                                  verbose=self.params_training['verbose'],
+                                  callbacks=[],
+                                  validation_data=None,
+                                  validation_split=self.params_training.get('val_split', 0.),
+                                  shuffle=self.params_training['shuffle'],
+                                  class_weight=None,
+                                  sample_weight=None,
+                                  initial_epoch=0)
+                        self.n_updates += 1
         else:
             # 2. Post-edit this sample in order to match the reference --> Use y
             # 3. Update net parameters with the corrected samples
@@ -150,7 +151,6 @@ class OnlineTrainer:
                     model.optimizer.set_weights(weights)
                     for k in range(1):
                         train_inputs = [x, state_below_y, state_below_h] + [y, hyp]
-
                         loss_val = model.evaluate(train_inputs,
                                                   np.zeros((y.shape[0], 1), dtype='float32'),
                                                   batch_size=1, verbose=0)
@@ -168,6 +168,7 @@ class OnlineTrainer:
                                   class_weight=None,
                                   sample_weight=None,
                                   initial_epoch=0)
+                        self.n_updates += 1
                         """
                         # Only for debugging
                         model.evaluate(train_inputs,
@@ -179,7 +180,7 @@ class OnlineTrainer:
                     del params['use_custom_loss']
                     del params['custom_loss']
                     model.trainNetFromSamples([x, state_below_y], y, params)
-
+                    n_updates += 1
     def checkParameters(self, input_params, params_training=False):
         """
         Validates a set of input parameters and uses the default ones if not specified.
@@ -206,6 +207,7 @@ class OnlineTrainer:
                                      'state_below_index': -1,
                                      'output_text_index': 0,
                                      'store_hypotheses': None,
+                                     'search_pruning': False,
                                      'pos_unk': False,
                                      'heuristic': 0,
                                      'mapping': None,
@@ -253,3 +255,6 @@ class OnlineTrainer:
                 params[key] = default_val
 
         return params
+
+    def get_n_updates(self):
+        return self.n_updates
