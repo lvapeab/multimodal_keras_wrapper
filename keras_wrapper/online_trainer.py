@@ -168,7 +168,7 @@ class OnlineTrainer:
                                   class_weight=None,
                                   sample_weight=None,
                                   initial_epoch=0)
-                        self.n_updates += 1
+                        self.n_updates += int(loss)
                         """
                         # Only for debugging
                         model.evaluate(train_inputs,
@@ -180,7 +180,8 @@ class OnlineTrainer:
                     del params['use_custom_loss']
                     del params['custom_loss']
                     model.trainNetFromSamples([x, state_below_y], y, params)
-                    n_updates += 1
+                    self.n_updates += 1
+
     def checkParameters(self, input_params, params_training=False):
         """
         Validates a set of input parameters and uses the default ones if not specified.
