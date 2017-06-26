@@ -691,7 +691,12 @@ class Model_Wrapper(object):
                           'each_n_epochs': 1,
                           'start_eval_on_epoch': 0,  # early stopping parameters
                           'lr_decay': None,  # LR decay parameters
-                          'lr_gamma': 0.1}
+                          'reduce_each_epochs': True,
+                          'start_reduction_on_epoch': 0,
+                          'lr_gamma': 0.1,
+                          'lr_reducer_type': 'linear',
+                          'lr_reducer_exp_base': 0.5,
+                          'lr_half_life': 50000}
         params = self.checkParameters(parameters, default_params)
         save_params = copy.copy(params)
         del save_params['extra_callbacks']
@@ -752,7 +757,8 @@ class Model_Wrapper(object):
                           'normalize': False,
                           'mean_substraction': True,
                           'data_augmentation': True,
-                          'verbose': 1, 'eval_on_sets': ['val'],
+                          'verbose': 1,
+                          'eval_on_sets': ['val'],
                           'reload_epoch': 0,
                           'extra_callbacks': [],
                           'shuffle': True,
@@ -763,7 +769,12 @@ class Model_Wrapper(object):
                           'each_n_epochs': 1,
                           'start_eval_on_epoch': 0,  # early stopping parameters
                           'lr_decay': None,  # LR decay parameters
-                          'lr_gamma': 0.1}
+                          'reduce_each_epochs': True,
+                          'start_reduction_on_epoch': 0,
+                          'lr_gamma': 0.1,
+                          'lr_reducer_type': 'linear',
+                          'lr_reducer_exp_base': 0.5,
+                          'lr_half_life': 50000}
         params = self.checkParameters(parameters, default_params)
         save_params = copy.copy(params)
         del save_params['extra_callbacks']
@@ -790,9 +801,15 @@ class Model_Wrapper(object):
 
         # LR reducer
         if params.get('lr_decay') is not None:
-            callback_lr_reducer = LearningRateReducer(lr_decay=params['lr_decay'], reduce_rate=params['lr_gamma'])
+            callback_lr_reducer = LearningRateReducer(reduce_rate=params['lr_gamma'],
+                                                      reduce_frequency=params['lr_decay'],
+                                                      reduce_each_epochs=params['reduce_each_epochs'],
+                                                      start_reduction_on_epoch=params['start_reduction_on_epoch'],
+                                                      exp_base=params['lr_reducer_exp_base'],
+                                                      half_life=params['lr_half_life'],
+                                                      reduction_function=params['lr_reducer_type'],
+                                                      verbose=params['verbose'])
             callbacks.append(callback_lr_reducer)
-
         # Early stopper
         if params.get('metric_check') is not None:
             callback_early_stop = EarlyStopping(self,
@@ -875,7 +892,14 @@ class Model_Wrapper(object):
 
         # LR reducer
         if params.get('lr_decay') is not None:
-            callback_lr_reducer = LearningRateReducer(lr_decay=params['lr_decay'], reduce_rate=params['lr_gamma'])
+            callback_lr_reducer = LearningRateReducer(reduce_rate=params['lr_gamma'],
+                                                      reduce_frequency=params['lr_decay'],
+                                                      reduce_each_epochs=params['reduce_each_epochs'],
+                                                      start_reduction_on_epoch=params['start_reduction_on_epoch'],
+                                                      exp_base=params['lr_reducer_exp_base'],
+                                                      half_life=params['lr_half_life'],
+                                                      reduction_function=params['lr_reducer_type'],
+                                                      verbose=params['verbose'])
             callbacks.append(callback_lr_reducer)
 
         # Early stopper
@@ -1409,7 +1433,7 @@ class Model_Wrapper(object):
             return samples, sample_scores
 
         #    def beam_search_DEPRECATED(self, X, params, null_sym=2):
-    def beam_search(self, X, params, return_alphas=False, null_sym=2):
+    def beam_search(self, X, params, return_alphas=False, eos_sym=0, null_sym=2):
         """
         Beam search method for Cond models.
         (https://en.wikibooks.org/wiki/Artificial_Intelligence/Search/Heuristic_search/Beam_search)
@@ -1437,6 +1461,7 @@ class Model_Wrapper(object):
 
         :param X: Model inputs
         :param params: Search parameters
+        :param eos_sym: <eos> symbol
         :param null_sym: <null> symbol
         :return: UNSORTED list of [k_best_samples, k_best_scores] (k: beam size)
         """
@@ -1453,8 +1478,11 @@ class Model_Wrapper(object):
             sample_alphas = []
             hyp_alphas = [[]] * live_k
 
-        maxlen = int(len(X[params['dataset_inputs'][0]][0]) * params['output_length_depending_on_x_factor']) if \
-            params['output_length_depending_on_x'] else params['maxlen']
+        maxlen = int(len(X[params['dataset_inputs'][0]][0]) * params['output_max_length_depending_on_x_factor']) if \
+            params['output_max_length_depending_on_x'] else params['maxlen']
+
+        minlen = int(len(X[params['dataset_inputs'][0]][0]) / params['output_min_length_depending_on_x_factor'] + 1e-7) if \
+            params['output_min_length_depending_on_x'] else 0
 
         # we must include an additional dimension if the input for each timestep are all the generated "words_so_far"
         if params['words_so_far']:
@@ -1478,6 +1506,10 @@ class Model_Wrapper(object):
                     prev_out = prev_out[:-1]
             else:
                 probs = self.predict_cond(X, state_below, params, ii)
+
+            if minlen > 0 and ii < minlen:
+                probs[:, eos_sym] = -np.inf
+
             # total score for every sample is sum of -log of word prb
             cand_scores = np.array(hyp_scores)[:, None] - np.log(probs)
             cand_flat = cand_scores.flatten()
@@ -1518,7 +1550,7 @@ class Model_Wrapper(object):
             hyp_alphas = []
             indices_alive = []
             for idx in xrange(len(new_hyp_samples)):
-                if new_hyp_samples[idx][-1] == 0:  # finished sample
+                if new_hyp_samples[idx][-1] == eos_sym:  # finished sample
                     samples.append(new_hyp_samples[idx])
                     sample_scores.append(new_hyp_scores[idx])
                     if ret_alphas:
@@ -1611,7 +1643,7 @@ class Model_Wrapper(object):
         """
 
         # Check input parameters and recover default values if needed
-        default_params = {'batch_size': 50, 'n_parallel_loaders': 8, 
+        default_params = {'batch_size': 50, 'n_parallel_loaders': 8,
                           'beam_size': 5, 'beam_batch_size': 50,
                           'normalize': False, 'mean_substraction': True,
                           'predict_on_sets': ['val'], 'maxlen': 20, 'n_samples': -1,
@@ -1889,8 +1921,10 @@ class Model_Wrapper(object):
                           'length_penalty': False,
                           'length_norm_factor': 0.0,
                           'coverage_norm_factor': 0.0,
-                          'output_length_depending_on_x': False,
-                          'output_length_depending_on_x_factor': 3
+                          'output_max_length_depending_on_x': False,
+                          'output_max_length_depending_on_x_factor': 3,
+                          'output_min_length_depending_on_x': False,
+                          'output_min_length_depending_on_x_factor': 2
                           }
 
         params = self.checkParameters(parameters, default_params)
@@ -2033,7 +2067,9 @@ class Model_Wrapper(object):
                                                           loading_X=True)[0]
                             else:
                                 x[input_id] = np.asarray([X[input_id][i]])
-                        samples, scores, alphas = self.beam_search(x, params,
+                        samples, scores, alphas = self.beam_search(x,
+                                                                   params,
+                                                                   eos_sym=ds.extra_words['<pad>'],
                                                                    null_sym=ds.extra_words['<null>'],
                                                                    return_alphas=params['coverage_penalty'])
 
