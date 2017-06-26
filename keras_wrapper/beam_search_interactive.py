@@ -2,21 +2,22 @@
 
 import numpy as np
 import copy
+import logging
 import math
 import sys
 import time
+
 from keras_wrapper.dataset import Data_Batch_Generator
+from keras_wrapper.utils import one_hot_2_indices
 from keras_wrapper.extra.isles_utils import *
 
-import logging
 logging.basicConfig(level=logging.DEBUG,
                     format='[%(asctime)s] %(message)s', datefmt='%d/%m/%Y %H:%M:%S')
 logger = logging.getLogger(__name__)
 #logger.setLevel(2)
 
 class BeamSearchEnsemble:
-
-    def __init__(self, models, dataset, params_prediction, verbose=0):
+    def __init__(self, models, dataset, params_prediction, n_best=False, verbose=0):
         """
 
         :param models:
@@ -26,14 +27,14 @@ class BeamSearchEnsemble:
         self.models = models
         self.dataset = dataset
         self.params = params_prediction
-        self.optimized_search = params_prediction['optimized_search'] if \
-            params_prediction.get('optimized_search') is not None else False
+        self.optimized_search = params_prediction.get('optimized_search', False)
+        self.return_alphas = params_prediction.get('coverage_penalty', False) or params_prediction.get('pos_unk', False)
+        self.n_best = n_best
         self.verbose = verbose
         if self.verbose > 0:
             logging.info('<<< "Optimized search: %s >>>' % str(self.optimized_search))
 
     # PREDICTION FUNCTIONS: Functions for making prediction on input samples
-
     def predict_cond(self, models, X, states_below, params, ii, prev_outs=None):
         """
         Call the prediction functions of all models, according to their inputs
@@ -54,7 +55,7 @@ class BeamSearchEnsemble:
                 [model_probs, next_outs] = model.predict_cond_optimized(X, states_below, params,
                                                                         ii, prev_out=prev_outs[i])
                 probs_list.append(model_probs)
-                if params['pos_unk']:
+                if self.return_alphas:
                     alphas_list.append(next_outs[-1][0])  # Shape: (k, n_steps)
                     next_outs = next_outs[:-1]
                 prev_outs_list.append(next_outs)
@@ -62,8 +63,8 @@ class BeamSearchEnsemble:
                 probs_list.append(model.predict_cond(X, states_below, params, ii))
         probs = sum(probs_list[i] for i in xrange(len(models))) / float(len(models))
 
-        if params['pos_unk']:
-            alphas = sum(alphas_list[i] for i in xrange(len(models)))
+        if self.return_alphas:
+            alphas = np.asarray(sum(alphas_list[i] for i in xrange(len(models))))
         else:
             alphas = None
         if self.optimized_search:
@@ -71,7 +72,7 @@ class BeamSearchEnsemble:
         else:
             return probs
 
-    def beam_search(self, X, params, null_sym=2):
+    def beam_search(self, X, params, eos_sym=0, null_sym=2):
         """
         Beam search method for Cond models.
         (https://en.wikibooks.org/wiki/Artificial_Intelligence/Search/Heuristic_search/Beam_search)
@@ -110,51 +111,70 @@ class BeamSearchEnsemble:
         live_k = 1  # samples that did not yet reached eos
         hyp_samples = [[]] * live_k
         hyp_scores = np.zeros(live_k).astype('float32')
-        if params['pos_unk']:
+        if self.return_alphas:
             sample_alphas = []
             hyp_alphas = [[]] * live_k
+
+        maxlen = int(len(X[params['dataset_inputs'][0]][0]) * params['output_max_length_depending_on_x_factor']) if \
+            params['output_max_length_depending_on_x'] else params['maxlen']
+
+        minlen = int(len(X[params['dataset_inputs'][0]][0]) / params['output_min_length_depending_on_x_factor'] + 1e-7) if \
+            params['output_min_length_depending_on_x'] else 0
+
         # we must include an additional dimension if the input for each timestep are all the generated "words_so_far"
         if params['words_so_far']:
-            if k > params['maxlen']:
+            if k > maxlen:
                 raise NotImplementedError("BEAM_SIZE can't be higher than MAX_OUTPUT_TEXT_LEN!")
             state_below = np.asarray([[null_sym]] * live_k) \
-                if pad_on_batch else np.asarray([np.zeros((params['maxlen'], params['maxlen']))] * live_k)
+                if pad_on_batch else np.asarray([np.zeros((maxlen, maxlen))] * live_k)
         else:
             state_below = np.asarray([null_sym] * live_k) \
-                if pad_on_batch else np.asarray([np.zeros(params['maxlen'])] * live_k)
-
+                if pad_on_batch else np.asarray([np.zeros(maxlen)] * live_k)
         prev_outs = [None] * len(self.models)
-        for ii in xrange(params['maxlen']):
+        for ii in xrange(maxlen):
             # for every possible live sample calc prob for every possible label
             if self.optimized_search:  # use optimized search model if available
                 [probs, prev_outs, alphas] = self.predict_cond(self.models, X, state_below, params, ii,
                                                                prev_outs=prev_outs)
             else:
                 probs = self.predict_cond(self.models, X, state_below, params, ii)
+
+            if minlen > 0 and ii < minlen:
+                probs[:, eos_sym] = -np.inf
+
             # total score for every sample is sum of -log of word prb
             cand_scores = np.array(hyp_scores)[:, None] - np.log(probs)
             cand_flat = cand_scores.flatten()
             # Find the best options by calling argsort of flatten array
-            ranks_flat = cand_flat.argsort()[:(k-dead_k)]
-
+            ranks_flat = cand_flat.argsort()[:(k - dead_k)]
             # Decypher flatten indices
             voc_size = probs.shape[1]
             trans_indices = ranks_flat / voc_size  # index of row
-            word_indices = ranks_flat % voc_size   # index of col
+            word_indices = ranks_flat % voc_size  # index of col
             costs = cand_flat[ranks_flat]
-
+            best_cost = costs[0]
             # Form a beam for the next iteration
             new_hyp_samples = []
             new_trans_indices = []
-            new_hyp_scores = np.zeros(k-dead_k).astype('float32')
-            if params['pos_unk']:
+            new_hyp_scores = np.zeros(k - dead_k).astype('float32')
+            if self.return_alphas:
                 new_hyp_alphas = []
             for idx, [ti, wi] in enumerate(zip(trans_indices, word_indices)):
-                new_hyp_samples.append(hyp_samples[ti]+[wi])
-                new_trans_indices.append(ti)
-                new_hyp_scores[idx] = copy.copy(costs[idx])
-                if params['pos_unk']:
-                    new_hyp_alphas.append(hyp_alphas[ti]+[alphas[ti]])
+                if params['search_pruning']:
+                    if costs[idx] < k * best_cost:
+                        new_hyp_samples.append(hyp_samples[ti] + [wi])
+                        new_trans_indices.append(ti)
+                        new_hyp_scores[idx] = copy.copy(costs[idx])
+                        if self.return_alphas:
+                            new_hyp_alphas.append(hyp_alphas[ti] + [alphas[ti]])
+                    else:
+                        dead_k += 1
+                else:
+                    new_hyp_samples.append(hyp_samples[ti] + [wi])
+                    new_trans_indices.append(ti)
+                    new_hyp_scores[idx] = copy.copy(costs[idx])
+                    if self.return_alphas:
+                        new_hyp_alphas.append(hyp_alphas[ti] + [alphas[ti]])
 
             # check the finished samples
             new_live_k = 0
@@ -163,10 +183,10 @@ class BeamSearchEnsemble:
             hyp_alphas = []
             indices_alive = []
             for idx in xrange(len(new_hyp_samples)):
-                if new_hyp_samples[idx][-1] == 0:  # finished sample
+                if new_hyp_samples[idx][-1] == eos_sym:  # finished sample
                     samples.append(new_hyp_samples[idx])
                     sample_scores.append(new_hyp_scores[idx])
-                    if params['pos_unk']:
+                    if self.return_alphas:
                         sample_alphas.append(new_hyp_alphas[idx])
                     dead_k += 1
                 else:
@@ -174,7 +194,7 @@ class BeamSearchEnsemble:
                     new_live_k += 1
                     hyp_samples.append(new_hyp_samples[idx])
                     hyp_scores.append(new_hyp_scores[idx])
-                    if params['pos_unk']:
+                    if self.return_alphas:
                         hyp_alphas.append(new_hyp_alphas[idx])
             hyp_scores = np.array(hyp_scores)
             live_k = new_live_k
@@ -193,17 +213,17 @@ class BeamSearchEnsemble:
             else:
                 state_below = np.hstack((np.zeros((state_below.shape[0], 1), dtype='int64'), state_below,
                                          np.zeros((state_below.shape[0],
-                                                   max(params['maxlen'] - state_below.shape[1] - 1, 0)),
-                                         dtype='int64')))
+                                                   max(maxlen - state_below.shape[1] - 1, 0)),
+                                                  dtype='int64')))
 
                 if params['words_so_far']:
                     state_below = np.expand_dims(state_below, axis=0)
                     state_below = np.hstack((state_below,
-                                             np.zeros((state_below.shape[0], params['maxlen'] - state_below.shape[1],
+                                             np.zeros((state_below.shape[0], maxlen - state_below.shape[1],
                                                        state_below.shape[2]))))
 
-            if params['optimized_search'] and ii > 0:
-                for n_model in  range(len(self.models)):
+            if self.optimized_search and ii > 0:
+                for n_model in range(len(self.models)):
                     # filter next search inputs w.r.t. remaining samples
                     for idx_vars in range(len(prev_outs[n_model])):
                         prev_outs[n_model][idx_vars] = prev_outs[n_model][idx_vars][indices_alive]
@@ -213,9 +233,9 @@ class BeamSearchEnsemble:
             for idx in xrange(live_k):
                 samples.append(hyp_samples[idx])
                 sample_scores.append(hyp_scores[idx])
-                if params['pos_unk']:
+                if self.return_alphas:
                     sample_alphas.append(hyp_alphas[idx])
-        if params['pos_unk']:
+        if self.return_alphas:
             return samples, sample_scores, sample_alphas
         else:
             return samples, sample_scores, None
@@ -224,7 +244,7 @@ class BeamSearchEnsemble:
         """
         Approximates by beam search the best predictions of the net on the dataset splits chosen.
         Params from config that affect the sarch process:
-            * batch_size: size of the batch
+            * max_batch_size: size of the maximum batch loaded into memory
             * n_parallel_loaders: number of parallel data batch loaders
             * normalization: apply data normalization on images/features or not (only if using images/features as input)
             * mean_substraction: apply mean data normalization on images or not (only if using images as input)
@@ -246,7 +266,7 @@ class BeamSearchEnsemble:
         """
 
         # Check input parameters and recover default values if needed
-        default_params = {'batch_size': 50,
+        default_params = {'max_batch_size': 50,
                           'n_parallel_loaders': 8,
                           'beam_size': 5,
                           'normalize': False,
@@ -258,21 +278,27 @@ class BeamSearchEnsemble:
                           'model_outputs': ['description'],
                           'dataset_inputs': ['source_text', 'state_below'],
                           'dataset_outputs': ['description'],
-                          'alpha_factor': 1.0,
                           'sampling_type': 'max_likelihood',
-                          'normalize_probs': False,
                           'words_so_far': False,
                           'optimized_search': False,
                           'pos_unk': False,
-                          'heuristic': 0,
-                          'mapping': None,
                           'state_below_index': -1,
+                          'search_pruning': False,
+                          'normalize_probs': False,
+                          'alpha_factor': 0.0,
+                          'coverage_penalty': False,
+                          'length_penalty': False,
+                          'length_norm_factor': 0.0,
+                          'coverage_norm_factor': 0.0,
+                          'output_max_length_depending_on_x': False,
+                          'output_max_length_depending_on_x_factor': 3,
+                          'output_min_length_depending_on_x': False,
+                          'output_min_length_depending_on_x_factor': 2
                           }
         params = self.checkParameters(self.params, default_params)
-
         predictions = dict()
         for s in params['predict_on_sets']:
-            logging.info("<<< Predicting outputs of " + s + " set >>>")
+            logging.info("\n <<< Predicting outputs of " + s + " set >>>")
             assert len(params['model_inputs']) > 0, 'We need at least one input!'
             if not params['optimized_search']:  # use optimized search model if available
                 assert not params['pos_unk'], 'PosUnk is not supported with non-optimized beam search methods'
@@ -280,7 +306,7 @@ class BeamSearchEnsemble:
             # Calculate how many interations are we going to perform
             if params['n_samples'] < 1:
                 n_samples = eval("self.dataset.len_" + s)
-                num_iterations = int(math.ceil(float(n_samples) / params['batch_size']))
+                num_iterations = int(math.ceil(float(n_samples)))# / params['batch_size']))
 
                 # Prepare data generator: We won't use an Homogeneous_Data_Batch_Generator here
                 # TODO: We prepare data as model 0... Different data preparators for each model?
@@ -288,21 +314,21 @@ class BeamSearchEnsemble:
                                                 self.models[0],
                                                 self.dataset,
                                                 num_iterations,
-                                                batch_size=params['batch_size'],
+                                                batch_size=1,
                                                 normalization=params['normalize'],
                                                 data_augmentation=False,
                                                 mean_substraction=params['mean_substraction'],
                                                 predict=True).generator()
             else:
                 n_samples = params['n_samples']
-                num_iterations = int(math.ceil(float(n_samples) / params['batch_size']))
+                num_iterations = int(math.ceil(float(n_samples))) # / params['batch_size']))
 
                 # Prepare data generator: We won't use an Homogeneous_Data_Batch_Generator here
                 data_gen = Data_Batch_Generator(s,
                                                 self.models[0],
                                                 self.dataset,
                                                 num_iterations,
-                                                batch_size=params['batch_size'],
+                                                batch_size=1,
                                                 normalization=params['normalize'],
                                                 data_augmentation=False,
                                                 mean_substraction=params['mean_substraction'],
@@ -320,6 +346,8 @@ class BeamSearchEnsemble:
             sampled = 0
             start_time = time.time()
             eta = -1
+            if self.n_best:
+                n_best_list = []
             for j in range(num_iterations):
                 data = data_gen.next()
                 X = dict()
@@ -351,9 +379,45 @@ class BeamSearchEnsemble:
                     for input_id in params['model_inputs']:
                         x[input_id] = np.asarray([X[input_id][i]])
                     samples, scores, alphas = self.beam_search(x, params, null_sym=self.dataset.extra_words['<null>'])
-                    if params['normalize_probs']:
-                        counts = [len(sample)**params['alpha_factor'] for sample in samples]
+
+                    if params['length_penalty'] or params['coverage_penalty']:
+                        if params['length_penalty']:
+                            length_penalties = [((5 + len(sample)) ** params['length_norm_factor']
+                                                 / (5+1) ** params['length_norm_factor']) # this 5 is a magic number by Google...
+                              for sample in samples]
+                        else:
+                            length_penalties = [1.0 for _ in len(samples)]
+
+                        if params['coverage_penalty']:
+                            coverage_penalties = []
+                            for k, sample in enumerate(samples):
+                                # We assume that source sentences are at the first position of x
+                                x_sentence = x[params['model_inputs'][0]][0]
+                                alpha = np.asarray(alphas[k])
+                                cp_penalty = 0.0
+                                for cp_i in range(len(x_sentence)):
+                                    att_weight = 0.0
+                                    for cp_j in range(len(sample)):
+                                        att_weight += alpha[cp_j, cp_i]
+                                    cp_penalty += np.log(min(att_weight, 1.0))
+                                coverage_penalties.append(params['coverage_norm_factor'] * cp_penalty)
+                        else:
+                            coverage_penalties = [0.0 for _ in len(samples)]
+                        scores = [co / lp + cp for co, lp, cp in zip(scores, length_penalties, coverage_penalties)]
+
+                    elif params['normalize_probs']:
+                        counts = [len(sample) ** params['alpha_factor'] for sample in samples]
                         scores = [co / cn for co, cn in zip(scores, counts)]
+
+                    if self.n_best:
+                        n_best_indices = np.argsort(scores)
+                        n_best_scores = np.asarray(scores)[n_best_indices]
+                        n_best_samples = np.asarray(samples)[n_best_indices]
+                        if alphas is not None:
+                            n_best_alphas = [np.stack(alphas[i]) for i in n_best_indices]
+                        else:
+                            n_best_alphas = [None] * len(n_best_indices)
+                        n_best_list.append([n_best_samples, n_best_scores, n_best_alphas])
                     best_score = np.argmin(scores)
                     best_sample = samples[best_score]
                     best_samples.append(best_sample)
@@ -366,16 +430,21 @@ class BeamSearchEnsemble:
                             references.append(Y[output_id][i])
 
             sys.stdout.write('Total cost of the translations: %f \t '
-                             'Average cost of the translations: %f\n' % (total_cost, total_cost/n_samples))
+                             'Average cost of the translations: %f\n' % (total_cost, total_cost / n_samples))
             sys.stdout.write('The sampling took: %f secs (Speed: %f sec/sample)\n' %
                              ((time.time() - start_time), (time.time() - start_time) / n_samples))
 
             sys.stdout.flush()
-
-            if params['pos_unk']:
-                predictions[s] = (np.asarray(best_samples), np.asarray(best_alphas), sources)
+            if self.n_best:
+                if params['pos_unk']:
+                    predictions[s] = (np.asarray(best_samples), np.asarray(best_alphas), sources), n_best_list
+                else:
+                    predictions[s] = np.asarray(best_samples), n_best_list
             else:
-                predictions[s] = np.asarray(best_samples)
+                if params['pos_unk']:
+                    predictions[s] = (np.asarray(best_samples), np.asarray(best_alphas), sources)
+                else:
+                    predictions[s] = np.asarray(best_samples)
 
         if params['n_samples'] < 1:
             return predictions
@@ -389,7 +458,7 @@ class BeamSearchEnsemble:
         :return:
         """
         # Check input parameters and recover default values if needed
-        default_params = {'batch_size': 50,
+        default_params = {'max_batch_size': 50,
                           'n_parallel_loaders': 8,
                           'beam_size': 5,
                           'normalize': False,
@@ -401,46 +470,90 @@ class BeamSearchEnsemble:
                           'model_outputs': ['description'],
                           'dataset_inputs': ['source_text', 'state_below'],
                           'dataset_outputs': ['description'],
-                          'alpha_factor': 1.0,
                           'sampling_type': 'max_likelihood',
-                          'normalize_probs': False,
                           'words_so_far': False,
                           'optimized_search': False,
                           'state_below_index': -1,
                           'output_text_index': 0,
+                          'search_pruning': False,
                           'pos_unk': False,
-                          'heuristic': 0,
-                          'mapping': None,
+                          'normalize_probs': False,
+                          'alpha_factor': 0.0,
+                          'coverage_penalty': False,
+                          'length_penalty': False,
+                          'length_norm_factor': 0.0,
+                          'coverage_norm_factor': 0.0,
+                          'output_max_length_depending_on_x': False,
+                          'output_max_length_depending_on_x_factor': 3,
+                          'output_min_length_depending_on_x': False,
+                          'output_min_length_depending_on_x_factor': 2
                           }
         params = self.checkParameters(self.params, default_params)
         params['pad_on_batch'] = self.dataset.pad_on_batch[params['dataset_inputs'][-1]]
         params['n_samples'] = 1
-        n_samples = params['n_samples']
-        if params['pos_unk']:
-            best_alphas = []
-
+        if self.n_best:
+            n_best_list = []
+            if self.return_alphas:
+                n_best_alphas = []
         X = dict()
         for input_id in params['model_inputs']:
             X[input_id] = src_sentence
         x = dict()
         for input_id in params['model_inputs']:
             x[input_id] = np.asarray([X[input_id]])
-        samples, unnormalized_scores, alphas = self.beam_search(x,
-                                                               params,
-                                                               null_sym=self.dataset.extra_words['<null>'])
-        if params['normalize_probs']:
-            counts = [len(sample)**params['alpha_factor'] for sample in samples]
-            scores = [co / cn for co, cn in zip(unnormalized_scores, counts)]
-        else:
-            scores = unnormalized_scores
+        samples, scores, alphas = self.beam_search(x,
+                                                   params,
+                                                   null_sym=self.dataset.extra_words['<null>'])
+
+        if params['length_penalty'] or params['coverage_penalty']:
+            if params['length_penalty']:
+                length_penalties = [((5 + len(sample)) ** params['length_norm_factor']
+                                     / (5+1) ** params['length_norm_factor']) # this 5 is a magic number by Google...
+                  for sample in samples]
+            else:
+                length_penalties = [1.0 for _ in len(samples)]
+
+            if params['coverage_penalty']:
+                coverage_penalties = []
+                for k, sample in enumerate(samples):
+                    # We assume that source sentences are at the first position of x
+                    x_sentence = x[params['model_inputs'][0]][0]
+                    alpha = np.asarray(alphas[k])
+                    cp_penalty = 0.0
+                    for cp_i in range(len(x_sentence)):
+                        att_weight = 0.0
+                        for cp_j in range(len(sample)):
+                            att_weight += alpha[cp_j, cp_i]
+                        cp_penalty += np.log(min(att_weight, 1.0))
+                    coverage_penalties.append(params['coverage_norm_factor'] * cp_penalty)
+            else:
+                coverage_penalties = [0.0 for _ in len(samples)]
+            scores = [co / lp + cp for co, lp, cp in zip(scores, length_penalties, coverage_penalties)]
+
+        elif params['normalize_probs']:
+            counts = [len(sample) ** params['alpha_factor'] for sample in samples]
+            scores = [co / cn for co, cn in zip(scores, counts)]
+
+        if self.n_best:
+            n_best_indices = np.argsort(scores)
+            n_best_scores = np.asarray(scores)[n_best_indices]
+            n_best_samples = np.asarray(samples)[n_best_indices]
+            if alphas is not None:
+                n_best_alphas = [np.stack(alphas[i]) for i in n_best_indices]
+            else:
+                n_best_alphas = [None] * len(n_best_indices)
+            n_best_list.append([n_best_samples, n_best_scores, n_best_alphas])
+
         best_score_idx = np.argmin(scores)
         best_sample = samples[best_score_idx]
-        if params['pos_unk']:
+        if self.return_alphas:
             best_alphas = np.asarray(alphas[best_score_idx])
         else:
             best_alphas = None
-
-        return np.asarray(best_sample), unnormalized_scores[best_score_idx], np.asarray(best_alphas)
+        if self.n_best:
+            return (np.asarray(best_sample), scores[best_score_idx], np.asarray(best_alphas)), n_best_list
+        else:
+            return np.asarray(best_sample), scores[best_score_idx], np.asarray(best_alphas)
 
     @staticmethod
     def checkParameters(input_params, default_params):
@@ -477,9 +590,10 @@ class InteractiveBeamSearchSampler:
         self.models = models
         self.dataset = dataset
         self.params = params_prediction
-        self.optimized_search = params_prediction['optimized_search'] if \
-            params_prediction.get('optimized_search') is not None else False
+        self.optimized_search = params_prediction.get('optimized_search', False)
+        self.return_alphas = params_prediction.get('coverage_penalty', False) or params_prediction.get('pos_unk', False)
         self.verbose = verbose
+        self.n_best = False # TODO: Useless attribute (for the moment...)
         if self.verbose > 0:
             logging.info('<<< "Optimized search: %s >>>' % str(self.optimized_search))
 
@@ -525,7 +639,7 @@ class InteractiveBeamSearchSampler:
         else:
             return probs
 
-    def interactive_beam_search(self, X, params, fixed_words=dict(), max_N=0, isles=list(), eos_id=0, null_sym=2,
+    def interactive_beam_search(self, X, params, fixed_words=dict(), max_N=0, isles=list(), eos_sym=0, null_sym=2,
                                 idx2word=dict()):
         """
         Beam search method for Cond models.
@@ -556,7 +670,7 @@ class InteractiveBeamSearchSampler:
         :param fixed_words:
         :param max_N:
         :param isles:
-        :param eos_id:
+        :param eos_sym:
         :param idx2word:
         :param null_sym: <null> symbol
         :return: UNSORTED list of [k_best_samples, k_best_scores] (k: beam size)
@@ -570,6 +684,7 @@ class InteractiveBeamSearchSampler:
         live_k = 1  # samples that did not yet reached eos
         hyp_samples = [[]] * live_k
         hyp_scores = np.zeros(live_k).astype('float32')
+
 
         if isles is not None:
             #unfixed_isles = filter(lambda x: not is_sublist(x[1], fixed_words.values()), [segment for segment in isles])
@@ -586,14 +701,21 @@ class InteractiveBeamSearchSampler:
         else:
             unfixed_isles = []
 
-        if params['pos_unk']:
+        if self.return_alphas:
             sample_alphas = []
             hyp_alphas = [[]] * live_k
+
+        maxlen = int(len(X[params['dataset_inputs'][0]][0]) * params['output_max_length_depending_on_x_factor']) if \
+            params['output_max_length_depending_on_x'] else params['maxlen']
+
+        minlen = int(len(X[params['dataset_inputs'][0]][0]) / params['output_min_length_depending_on_x_factor'] + 1e-7) if \
+            params['output_min_length_depending_on_x'] else 0
+
         state_below = np.asarray([null_sym] * live_k) \
             if pad_on_batch else np.asarray([np.zeros(params['maxlen'])] * live_k)
 
         prev_outs = [None] * len(self.models)
-        while ii < params['maxlen']:
+        while ii < maxlen:
             # for every possible live sample calc prob for every possible label
             logger.log(2, "hyp_samples" + str(hyp_samples))
             logger.log(2, "hyp_scores" + str(hyp_scores))
@@ -622,8 +744,11 @@ class InteractiveBeamSearchSampler:
             else:
                 max_fixed_pos = max(fixed_words.keys())
 
+            if minlen > 0 and ii < minlen:
+                probs[:, eos_sym] = -np.inf
+
             if len(unfixed_isles) > 0 or ii < max_fixed_pos:
-                log_probs[:, eos_id] = -np.inf
+                log_probs[:, eos_sym] = -np.inf
 
             if len(unfixed_isles) == 0 or ii in fixed_words:  # There are no remaining isles. Regular decoding.
                 # If word is fixed, we only consider this hypothesis
@@ -647,15 +772,25 @@ class InteractiveBeamSearchSampler:
                 new_hyp_samples = []
                 new_trans_indices = []
                 new_hyp_scores = np.zeros(k-dead_k).astype('float32')
-                if params['pos_unk']:
+                if self.return_alphas:
                     new_hyp_alphas = []
 
-                for idx, [orig_idx, next_word] in enumerate(zip(trans_indices, word_indices)):
-                    new_hyp_samples.append(hyp_samples[orig_idx]+[next_word])
-                    new_trans_indices.append(orig_idx)
-                    new_hyp_scores[idx] = copy.copy(costs[idx])
-                    if params['pos_unk']:
-                        new_hyp_alphas.append(hyp_alphas[orig_idx]+[alphas[orig_idx]])
+                for idx, [ti, wi] in enumerate(zip(trans_indices, word_indices)):
+                    if params['search_pruning']:
+                        if costs[idx] < k * best_cost:
+                            new_hyp_samples.append(hyp_samples[ti] + [wi])
+                            new_trans_indices.append(ti)
+                            new_hyp_scores[idx] = copy.copy(costs[idx])
+                            if self.return_alphas:
+                                new_hyp_alphas.append(hyp_alphas[ti] + [alphas[ti]])
+                        else:
+                            dead_k += 1
+                    else:
+                        new_hyp_samples.append(hyp_samples[ti] + [wi])
+                        new_trans_indices.append(ti)
+                        new_hyp_scores[idx] = copy.copy(costs[idx])
+                        if self.return_alphas:
+                            new_hyp_alphas.append(hyp_alphas[ti] + [alphas[ti]])
 
                 # check the finished samples
                 new_live_k = 0
@@ -664,10 +799,10 @@ class InteractiveBeamSearchSampler:
                 hyp_alphas = []
                 indices_alive = []
                 for idx in xrange(len(new_hyp_samples)):
-                    if new_hyp_samples[idx][-1] == 0:  # finished sample
+                    if new_hyp_samples[idx][-1] == eos_sym:  # finished sample
                         samples.append(new_hyp_samples[idx])
                         sample_scores.append(new_hyp_scores[idx])
-                        if params['pos_unk']:
+                        if self.return_alphas:
                             sample_alphas.append(new_hyp_alphas[idx])
                         dead_k += 1
                     else:
@@ -675,7 +810,7 @@ class InteractiveBeamSearchSampler:
                         new_live_k += 1
                         hyp_samples.append(new_hyp_samples[idx])
                         hyp_scores.append(new_hyp_scores[idx])
-                        if params['pos_unk']:
+                        if self.return_alphas:
                             hyp_alphas.append(new_hyp_alphas[idx])
                 hyp_scores = np.array(hyp_scores)
                 live_k = new_live_k
@@ -693,10 +828,10 @@ class InteractiveBeamSearchSampler:
                     state_below = np.hstack((np.zeros((state_below.shape[0], 1), dtype='int64'),
                                              state_below,
                                              np.zeros((state_below.shape[0],
-                                                       max(params['maxlen'] - state_below.shape[1] - 1, 0)),
+                                                       max(maxlen - state_below.shape[1] - 1, 0)),
                                              dtype='int64')))
 
-                if params['optimized_search'] and ii > 0:
+                if self.optimized_search and ii > 0:
                     for n_model in range(len(self.models)):
                         # filter next search inputs w.r.t. remaining samples
                         for idx_vars in range(len(prev_outs[n_model])):
@@ -704,7 +839,7 @@ class InteractiveBeamSearchSampler:
             else:  # We are in the middle of two isles
                 forward_hyp_trans = [[]] * max_N
                 forward_hyp_scores = [[]] * max_N
-                if params['pos_unk']:
+                if self.return_alphas:
                     forward_alphas = [[]] * max_N
                 forward_state_belows = [[]] * max_N
                 forward_prev_outs = [[]] * max_N
@@ -712,7 +847,7 @@ class InteractiveBeamSearchSampler:
 
                 hyp_samples_ = copy.copy(hyp_samples)
                 hyp_scores_ = copy.copy(hyp_scores)
-                if params['pos_unk']:
+                if self.return_alphas:
                     hyp_alphas_ = copy.copy(hyp_alphas)
                 n_samples_ = k-dead_k
                 for forward_steps in range(max_N):
@@ -733,7 +868,7 @@ class InteractiveBeamSearchSampler:
                     log_probs = np.log(probs)
 
                     # Adjust log probs according to search restrictions
-                    log_probs[:, eos_id] = -np.inf
+                    log_probs[:, eos_sym] = -np.inf
 
                     # If word is fixed, we only consider this hypothesis
                     if ii + forward_steps in fixed_words:
@@ -755,13 +890,13 @@ class InteractiveBeamSearchSampler:
                     new_hyp_samples = []
                     new_trans_indices = []
                     new_hyp_scores = np.zeros(n_samples_).astype('float32')
-                    if params['pos_unk']:
+                    if self.return_alphas:
                         new_hyp_alphas = []
                     for idx, [orig_idx, next_word] in enumerate(zip(trans_indices, word_indices)):
                         new_hyp_samples.append(hyp_samples_[orig_idx]+[next_word])
                         new_trans_indices.append(orig_idx)
                         new_hyp_scores[idx] = copy.copy(costs[idx])
-                        if params['pos_unk']:
+                        if self.return_alphas:
                             new_hyp_alphas.append(hyp_alphas_[orig_idx]+[alphas[orig_idx]])
 
                     # check the finished samples
@@ -771,12 +906,12 @@ class InteractiveBeamSearchSampler:
                     hyp_alphas_ = []
                     indices_alive_ = []
                     for idx in xrange(len(new_hyp_samples)):
-                        if new_hyp_samples[idx][-1] != 0:  # Not finished sample
+                        if new_hyp_samples[idx][-1] != eos_sym:  # Not finished sample
                             indices_alive_.append(new_trans_indices[idx])
                             new_live_k_ += 1
                             hyp_samples_.append(new_hyp_samples[idx])
                             hyp_scores_.append(new_hyp_scores[idx])
-                            if params['pos_unk']:
+                            if self.return_alphas:
                                 hyp_alphas_.append(new_hyp_alphas[idx])
 
                     state_below = np.asarray(hyp_samples_, dtype='int64')
@@ -786,16 +921,16 @@ class InteractiveBeamSearchSampler:
                     else:
                         state_below = np.hstack((np.zeros((state_below.shape[0], 1), dtype='int64'), state_below,
                                                  np.zeros((state_below.shape[0],
-                                                           max(params['maxlen'] - state_below.shape[1] - 1, 0)),
+                                                           max(maxlen - state_below.shape[1] - 1, 0)),
                                                  dtype='int64')))
                     forward_indices_alive[forward_steps] = indices_alive_
                     forward_hyp_scores[forward_steps] = hyp_scores_
                     forward_hyp_trans[forward_steps] = hyp_samples_
-                    if params['pos_unk']:
+                    if self.return_alphas:
                         forward_alphas[forward_steps] = hyp_alphas_
                     forward_state_belows[forward_steps] = state_below
                     forward_prev_outs[forward_steps] = prev_outs
-                    if params['optimized_search'] and ii > 0:
+                    if self.optimized_search and ii > 0:
                         for n_model in range(len(self.models)):
                             # filter next search inputs w.r.t. remaining samples
                             for idx_vars in range(len(prev_outs[n_model])):
@@ -872,7 +1007,7 @@ class InteractiveBeamSearchSampler:
                                       "Fix the segment next to the current beam")
                         hyp_samples = []
                         hyp_scores = []
-                        if params['pos_unk']:
+                        if self.return_alphas:
                             hyp_alphas = []
                         state_below = []
                         prev_outs = [[]] * len(self.models)
@@ -892,7 +1027,7 @@ class InteractiveBeamSearchSampler:
                                 forward_indices_compatible.append(beam_index)
                                 hyp_samples.append(forward_hyp_trans[best_n_words_index][beam_index])
                                 hyp_scores.append(forward_hyp_scores[best_n_words_index][beam_index])
-                                if params['pos_unk']:
+                                if self.return_alphas:
                                     hyp_alphas.append(forward_alphas[best_n_words_index][beam_index])
                                 state_below.append(forward_state_belows[best_n_words_index][beam_index])
                         logger.log(3,  "forward_indices_compatible" +str(forward_indices_compatible))
@@ -904,7 +1039,7 @@ class InteractiveBeamSearchSampler:
                         if len(forward_indices_compatible) == 0:
                             hyp_samples = forward_hyp_trans[best_n_words_index]
                             hyp_scores = forward_hyp_scores[best_n_words_index]
-                            if params['pos_unk']:
+                            if self.return_alphas:
                                 hyp_alphas = forward_alphas[best_n_words_index]
                             state_below = forward_state_belows[best_n_words_index]
                             prev_outs = forward_prev_outs[best_n_words_index]
@@ -918,7 +1053,7 @@ class InteractiveBeamSearchSampler:
 
                         hyp_samples = []
                         hyp_scores = []
-                        if params['pos_unk']:
+                        if self.return_alphas:
                             hyp_alphas = []
                         state_below = []
                         prev_outs = [[]] * len(self.models)
@@ -951,7 +1086,7 @@ class InteractiveBeamSearchSampler:
                         assert overlapping_position > -1, 'Error detecting overlapped position!'
                         hyp_samples = []
                         hyp_scores = []
-                        if params['pos_unk']:
+                        if self.return_alphas:
                             hyp_alphas = []
                         state_below = []
                         prev_outs = [[]] * len(self.models)
@@ -1002,9 +1137,9 @@ class InteractiveBeamSearchSampler:
             for idx in xrange(live_k):
                 samples.append(hyp_samples[idx])
                 sample_scores.append(hyp_scores[idx])
-                if params['pos_unk']:
+                if self.return_alphas:
                     sample_alphas.append(hyp_alphas[idx])
-        if params['pos_unk']:
+        if self.return_alphas:
             return samples, sample_scores, sample_alphas
         else:
             return samples, sample_scores, None
@@ -1019,69 +1154,115 @@ class InteractiveBeamSearchSampler:
         :return:
         """
         # Check input parameters and recover default values if needed
-        default_params = {'batch_size': 50,
+        default_params = {'max_batch_size': 50,
                           'n_parallel_loaders': 8,
                           'beam_size': 5,
                           'normalize': False,
                           'mean_substraction': True,
                           'predict_on_sets': ['val'],
                           'maxlen': 20,
-                          'n_samples': 1,
+                          'n_samples': -1,
                           'model_inputs': ['source_text', 'state_below'],
                           'model_outputs': ['description'],
                           'dataset_inputs': ['source_text', 'state_below'],
                           'dataset_outputs': ['description'],
-                          'alpha_factor': 1.0,
                           'sampling_type': 'max_likelihood',
                           'words_so_far': False,
                           'optimized_search': False,
                           'state_below_index': -1,
                           'output_text_index': 0,
+                          'search_pruning': False,
                           'pos_unk': False,
-                          'heuristic': 0,
-                          'mapping': None,
                           'normalize_probs': False,
+                          'alpha_factor': 0.0,
+                          'coverage_penalty': False,
+                          'length_penalty': False,
+                          'length_norm_factor': 0.0,
+                          'coverage_norm_factor': 0.0,
+                          'output_max_length_depending_on_x': False,
+                          'output_max_length_depending_on_x_factor': 3,
+                          'output_min_length_depending_on_x': False,
+                          'output_min_length_depending_on_x_factor': 2
                           }
         params = self.checkParameters(self.params, default_params)
         params['pad_on_batch'] = self.dataset.pad_on_batch[params['dataset_inputs'][-1]]
         params['n_samples'] = 1
         n_samples = params['n_samples']
         # Prepare data generator: We won't use an Homogeneous_Data_Batch_Generator here
-        if params['pos_unk']:
+        if self.return_alphas:
             best_alphas = []
-
+        if self.n_best:
+            n_best_list = []
+            if self.return_alphas:
+                n_best_alphas = []
         X = dict()
         for input_id in params['model_inputs']:
             X[input_id] = src_sentence
         x = dict()
         for input_id in params['model_inputs']:
             x[input_id] = np.asarray([X[input_id]])
-        samples, unnormalized_scores, alphas = self.interactive_beam_search(x,
+        samples, scores, alphas = self.interactive_beam_search(x,
                                                                params,
                                                                fixed_words=fixed_words,
                                                                max_N=max_N,
                                                                isles=isles,
                                                                null_sym=self.dataset.extra_words['<null>'],
                                                                idx2word=idx2word)
-        if params['normalize_probs']:
-            counts = [len(sample)**params['alpha_factor'] for sample in samples]
-            scores = [co / cn for co, cn in zip(unnormalized_scores, counts)]
-            best_score_idx = np.argmin(scores)
-            best_sample = samples[best_score_idx]
-            if params['pos_unk']:
-                best_alphas = np.asarray(alphas[best_score_idx])
+        if params['length_penalty'] or params['coverage_penalty']:
+            if params['length_penalty']:
+                length_penalties = [((5 + len(sample)) ** params['length_norm_factor']
+                                     / (5+1) ** params['length_norm_factor']) # this 5 is a magic number by Google...
+                  for sample in samples]
             else:
-                best_alphas = None
+                length_penalties = [1.0 for _ in len(samples)]
 
-        return np.asarray(best_sample), scores[best_score_idx], np.asarray(best_alphas)
+            if params['coverage_penalty']:
+                coverage_penalties = []
+                for k, sample in enumerate(samples):
+                    # We assume that source sentences are at the first position of x
+                    x_sentence = x[params['model_inputs'][0]][0]
+                    alpha = np.asarray(alphas[k])
+                    cp_penalty = 0.0
+                    for cp_i in range(len(x_sentence)):
+                        att_weight = 0.0
+                        for cp_j in range(len(sample)):
+                            att_weight += alpha[cp_j, cp_i]
+                        cp_penalty += np.log(min(att_weight, 1.0))
+                    coverage_penalties.append(params['coverage_norm_factor'] * cp_penalty)
+            else:
+                coverage_penalties = [0.0 for _ in len(samples)]
+            scores = [co / lp + cp for co, lp, cp in zip(scores, length_penalties, coverage_penalties)]
+
+        elif params['normalize_probs']:
+            counts = [len(sample) ** params['alpha_factor'] for sample in samples]
+            scores = [co / cn for co, cn in zip(scores, counts)]
+
+        if self.n_best:
+            n_best_indices = np.argsort(scores)
+            n_best_scores = np.asarray(scores)[n_best_indices]
+            n_best_samples = np.asarray(samples)[n_best_indices]
+            if alphas is not None:
+                n_best_alphas = [np.stack(alphas[i]) for i in n_best_indices]
+            else:
+                n_best_alphas = [None] * len(n_best_indices)
+            n_best_list.append([n_best_samples, n_best_scores, n_best_alphas])
+
+        best_score_idx = np.argmin(scores)
+        best_sample = samples[best_score_idx]
+        if self.return_alphas:
+            best_alphas = np.asarray(alphas[best_score_idx])
+        else:
+            best_alphas = None
+        if self.n_best:
+            return (np.asarray(best_sample), scores[best_score_idx], np.asarray(best_alphas)), n_best_list
+        else:
+            return np.asarray(best_sample), scores[best_score_idx], np.asarray(best_alphas)
+
 
     @staticmethod
     def checkParameters(input_params, default_params):
         """
-        Validates a set of input parameters and uses the default ones if not specified.
-        :param input_params:
-        :param default_params:
-        :return:
+            Validates a set of input parameters and uses the default ones if not specified.
         """
         valid_params = [key for key in default_params]
         params = dict()
@@ -1090,8 +1271,6 @@ class InteractiveBeamSearchSampler:
         for key, val in input_params.iteritems():
             if key in valid_params:
                 params[key] = val
-            else:
-                logger.warn("Parameter '" + key + "' is an unexpected parameter.")
 
         # Use default parameters if not provided
         for key, default_val in default_params.iteritems():
