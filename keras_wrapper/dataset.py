@@ -1019,7 +1019,8 @@ class Dataset(object):
         :return: Preprocessed labels.
         """
         if not isinstance(labels_list, list):
-            raise Exception('Wrong type for "path_list". It must be an instance of the class list.')
+            raise Exception('Wrong type for "labels_list". It must be an instance of the class list.\n'
+                            'It currently is: %s' % str(labels_list))
 
         if sparse:
             labels = labels_list
