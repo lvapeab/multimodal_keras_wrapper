@@ -8,27 +8,44 @@ import copy
 
 class OnlineTrainer:
 
-    def __init__(self, models, dataset, sampler, params_prediction, params_training, verbose=0):
+    def __init__(self, models, dataset, sampler, params_prediction=None, params_training=None, verbose=0):
         """
+        Class for performing online training in a post-editing scenario.
 
-        :param models:
-        :param dataset:
-        :param params_prediction:
+        :param models: Models to use for decoding/training.
+        :param dataset: Dataset instance for the task at hand.
+        :param sampler: Sampler instance (e.g. BeamSearcher) for decoding
+        :param params_prediction: Parameters for making predictions
+        :param params_training: Training parameters
+        :param verbose: Be verbose or not
         """
         self.models = models
         self.dataset = dataset
         self.sampler = sampler
         self.verbose = verbose
-        self.params_prediction = self.checkParameters(params_prediction)
-        self.params_training = self.checkParameters(params_training, params_training=True)
-        self.index2word_y = self.dataset.vocabulary[params_prediction['dataset_outputs'][0]]['idx2words']
+        self.params_prediction = self.checkParameters(params_prediction) if params_prediction is not None else {}
+        self.params_training = self.checkParameters(params_training, params_training=True) if params_training\
+                                                                                              is not None else None
+        target_vocabulary_id = params_prediction['dataset_outputs'][0] if params_prediction is not None else 'target_text'
+        self.index2word_y = self.dataset.vocabulary[target_vocabulary_id]['idx2words']
         self.mapping = None if self.dataset.mapping == dict() else self.dataset.mapping
         self.n_updates = 0
-        if self.params_prediction['n_best_optimizer']:
+        if self.params_prediction.get('n_best_optimizer', False):
             from pycocoevalcap.sentence_bleu.sentence_bleu import SentenceBleuScorer
             self.sentence_scorer = SentenceBleuScorer('')
 
     def sample_and_train_online(self, X, Y, src_words=None, trg_words=None):
+        """
+        Online training in a post-editing scenario.
+        First, we make a sample with the model(s).
+        Next, we post-edit it (using the reference).
+        Finally, we update our model(s).
+        :param X: Model inputs (source_text, state_below)
+        :param Y: Model outputs (target text)
+        :param src_words: Sequence of source words
+        :param trg_words: Sequence of target words
+        :return: None
+        """
         x = X[0]
         state_below_y = X[1]
         y = Y[0]
@@ -169,12 +186,133 @@ class OnlineTrainer:
                                   sample_weight=None,
                                   initial_epoch=0)
                         self.n_updates += int(loss)
-                        """
-                        # Only for debugging
-                        model.evaluate(train_inputs,
-                                       np.zeros((y.shape[0], 1), dtype='float32'),
-                                       batch_size=1, verbose=0)
-                        """
+                else:
+                    params = copy.copy(self.params_training)
+                    del params['use_custom_loss']
+                    del params['custom_loss']
+                    model.trainNetFromSamples([x, state_below_y], y, params)
+                    self.n_updates += 1
+
+    def train_online(self, X, Y, trans_indices=None, trg_words=None, n_best=None):
+        """
+        Online training in a post-editing scenario. We only apply the training step.
+        :param X: Model inputs (source_text, state_below)
+        :param Y: Model outputs (target text)
+        :param trans_indices: Indices of words for the prediction made by the model
+        :param trg_words: Sequence of target words
+        :param n_best: n_best list (in case of n-best-based optimizers)
+        :return: None
+        """
+        x = X[0]
+        state_below_y = X[1]
+        y = Y[0]
+
+
+        if self.params_training.get('use_custom_loss', False):
+            raise Exception, 'Custom loss + train_online (interactive) still unimplemented. Refer to sample_and_train_online'
+            state_below_h = np.asarray([np.append(self.dataset.extra_words['<null>'], trans_indices[:-1])])
+            hyp = np.array([indices_2_one_hot(trans_indices, self.dataset.vocabulary_len["target_text"])])
+
+        if self.params_prediction.get('n_best_optimizer', False):
+            raise Exception, 'N-best optimizer + train_online (interactive) still unimplemented. Refer to sample_and_train_online'
+            if self.verbose > 0:
+                print ""
+                print "\tReference: ", trg_words[0]
+            for n_best_preds, n_best_scores, n_best_alphas in n_best:
+                n_best_predictions = []
+                for i, (n_best_pred, n_best_score, n_best_alpha) in enumerate(zip(n_best_preds,
+                                                                                n_best_scores,
+                                                                                n_best_alphas)):
+                    pred = decode_predictions_beam_search([n_best_pred],
+                                                          self.index2word_y,
+                                                          alphas=[n_best_alpha],
+                                                          x_text=sources,
+                                                          heuristic=heuristic,
+                                                          mapping=self.mapping,
+                                                          pad_sequences=True,
+                                                          verbose=0)
+                    # Apply detokenization function if needed
+                    if self.params_prediction.get('apply_detokenization', False):
+                        pred = map(self.params_prediction['detokenize_f'], pred)
+
+                    if self.sentence_scorer is not None:
+                        # We are always minimizing, therefore, we use 1 - BLEU as score.
+                        score = 1. - self.sentence_scorer.score(pred[0].split())
+                    else:
+                        score = n_best_score
+                    n_best_predictions.append([i, n_best_pred, pred, score])
+            for model in self.models:
+                weights = model.trainable_weights
+                weights.sort(key=lambda x: x.name if x.name else x.auto_name)
+                model.optimizer.set_weights(weights)
+                top_prob_h = np.asarray(n_best_predictions[0][1])
+                p = np.argsort([nbest[3] for nbest in n_best_predictions])
+                if p[0] == 0:
+                    if self.verbose > 0:
+                        print "The top-prob hypothesis and the top bleu hypothesis match"
+                else:
+                    if self.verbose:
+                        print "The top-prob hypothesis and the top bleu hypothesis don't match"
+                        print "top-prob h:", n_best_predictions[0][2][0], "Bleu:", 1-n_best_predictions[0][-1]
+                        print "top_bleu_h", n_best_predictions[p[0]][2][0], "Bleu:", 1-n_best_predictions[p[0]][-1]
+                        print "Updating..."
+
+                    top_bleu_h = np.asarray(n_best_predictions[p[0]][1])
+                    state_below_top_prob_h = np.asarray([np.append(self.dataset.extra_words['<null>'],
+                                                                   top_prob_h[:-1])])
+                    state_below_top_bleu_h = np.asarray([np.append(self.dataset.extra_words['<null>'],
+                                                                   top_bleu_h[:-1])])
+                    top_prob_h = np.array([indices_2_one_hot(top_prob_h,
+                                                             self.dataset.vocabulary_len["target_text"])])
+                    top_bleu_h = np.array([indices_2_one_hot(top_bleu_h,
+                                                             self.dataset.vocabulary_len["target_text"])])
+
+                    train_inputs = [x, state_below_top_bleu_h, state_below_top_prob_h] + [top_bleu_h, top_prob_h]
+                    model.optimizer.loss_value.set_value(1.0)
+                for k in range(3):
+                        model.fit(train_inputs,
+                                  np.zeros((state_below_top_prob_h.shape[0], 1), dtype='float32'),
+                                  batch_size=min(self.params_training['batch_size'], len(x)),
+                                  nb_epoch=self.params_training['n_epochs'],
+                                  verbose=self.params_training['verbose'],
+                                  callbacks=[],
+                                  validation_data=None,
+                                  validation_split=self.params_training.get('val_split', 0.),
+                                  shuffle=self.params_training['shuffle'],
+                                  class_weight=None,
+                                  sample_weight=None,
+                                  initial_epoch=0)
+                        self.n_updates += 1
+        else:
+            # 2. Post-edit this sample in order to match the reference --> Use y
+            # 3. Update net parameters with the corrected samples
+            for model in self.models:
+                if self.params_training.get('use_custom_loss', False):
+                    raise Exception, 'Custom loss optimizers + train_online (interactive) still unimplemented. Refer to sample_and_train_online'
+
+                    weights = model.trainable_weights
+                    weights.sort(key=lambda x: x.name if x.name else x.auto_name)
+                    model.optimizer.set_weights(weights)
+                    for k in range(1):
+                        train_inputs = [x, state_below_y, state_below_h] + [y, hyp]
+                        loss_val = model.evaluate(train_inputs,
+                                                  np.zeros((y.shape[0], 1), dtype='float32'),
+                                                  batch_size=1, verbose=0)
+                        loss = 1.0 if loss_val > 0 else 0.0
+                        model.optimizer.loss_value.set_value(loss)
+                        model.fit(train_inputs,
+                                  np.zeros((y.shape[0], 1), dtype='float32'),
+                                  batch_size=min(self.params_training['batch_size'], len(x)),
+                                  nb_epoch=self.params_training['n_epochs'],
+                                  verbose=self.params_training['verbose'],
+                                  callbacks=[],
+                                  validation_data=None,
+                                  validation_split=self.params_training.get('val_split', 0.),
+                                  shuffle=self.params_training['shuffle'],
+                                  class_weight=None,
+                                  sample_weight=None,
+                                  initial_epoch=0)
+                        self.n_updates += int(loss)
                 else:
                     params = copy.copy(self.params_training)
                     del params['use_custom_loss']
