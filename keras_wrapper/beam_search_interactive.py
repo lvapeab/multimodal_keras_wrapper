@@ -641,8 +641,8 @@ class InteractiveBeamSearchSampler:
         else:
             return probs
 
-    def interactive_beam_search(self, X, params, fixed_words=dict(), max_N=0, isles=list(), eos_sym=0, null_sym=2,
-                                idx2word=dict()):
+    def interactive_beam_search(self, X, params,
+                                fixed_words=None, max_N=0, isles=None, eos_sym=0, null_sym=2, idx2word=None):
         """
         Beam search method for Cond models.
         (https://en.wikibooks.org/wiki/Artificial_Intelligence/Search/Heuristic_search/Beam_search)
@@ -677,6 +677,14 @@ class InteractiveBeamSearchSampler:
         :param null_sym: <null> symbol
         :return: UNSORTED list of [k_best_samples, k_best_scores] (k: beam size)
         """
+
+        if fixed_words is None:
+            fixed_words = dict()
+        if isles is None:
+            isles = list()
+        if idx2word is None:
+            idx2word = dict()
+
         k = params['beam_size']
         ii = 0
         samples = []
@@ -1159,7 +1167,7 @@ class InteractiveBeamSearchSampler:
         else:
             return samples, sample_scores, None
 
-    def sample_beam_search_interactive(self, src_sentence, fixed_words=dict(), max_N=0, isles=list(), idx2word=dict()):
+    def sample_beam_search_interactive(self, src_sentence, fixed_words=None, max_N=0, isles=None, idx2word=None):
         """
         Samples a sentence using the restrictions provided in fixed_words.
         :param src_sentence: Source sentence to translate.
@@ -1170,6 +1178,13 @@ class InteractiveBeamSearchSampler:
         :return:
         """
         # Check input parameters and recover default values if needed
+        if fixed_words is None:
+            fixed_words = dict()
+        if isles is None:
+            isles = list()
+        if idx2word is None:
+            idx2word = dict()
+
         default_params = {'max_batch_size': 50,
                           'n_parallel_loaders': 8,
                           'beam_size': 5,
