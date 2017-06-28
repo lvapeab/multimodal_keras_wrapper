@@ -6,7 +6,7 @@ import numpy as np
 def parse_input(line, dataset, idx2word):
     seqin = line.split()
     seqlen = len(seqin)
-    seq = np.zeros(seqlen+1, dtype='int64')
+    seq = np.zeros(seqlen + 1, dtype='int64')
     seq_words = []
     for idx, sx in enumerate(seqin):
         if idx2word.get(sx) is not None:
@@ -59,9 +59,9 @@ def find_isles(s1, s2, x=0, y=0):
     s1_bef = s1[:x_start]
     s1_aft = s1[x_start + len(com):]
     s2_bef = s2[:y_start]
-    s2_aft = s2[y_start+len(com):]
+    s2_aft = s2[y_start + len(com):]
     before = find_isles(s1_bef, s2_bef, x, y)
-    after  = find_isles(s1_aft, s2_aft, x + x_start + len_common, y + y_start + len_common)
+    after = find_isles(s1_aft, s2_aft, x + x_start + len_common, y + y_start + len_common)
     return (before[0] + [(x + x_start, com)] + after[0],
             before[1] + [(y + y_start, com)] + after[1])
 
@@ -83,8 +83,7 @@ def subfinder(pattern, mylist):
     return [], -1
 
 
-def compute_mouse_movements(isles, old_isles, last_checked_index):
-
+def compute_mouse_movements(isles, prev_isles, last_checked_index):
     """
     Computes the intersection between two sets of isles.
     The costs are:
@@ -94,25 +93,23 @@ def compute_mouse_movements(isles, old_isles, last_checked_index):
     (Note: Augmenting an isle already counts as MAs with the above criterion)
 
     :param isles: List of isles
-    :param old_isles: List of isles selected in the previous iteration
+    :param prev_isles: List of isles selected in the previous iteration
+    :param last_checked_index: Don't compute already computed mouse actions
     :return: Number of mouse actions performed
     """
     mouse_actions_sentence = 0
     for index, words in isles:
         # For each isle, we check that it is not included in the previous isles
         if index > last_checked_index:  # We don't select validated prefixes
-            if not any(map(lambda x: words[0] in x, old_isles)):
+            if not any(map(lambda x: words[0] in x, prev_isles)):
                 if len(words) > 1:
-                    mouse_actions_sentence += 2 # Selection of new isle
+                    mouse_actions_sentence += 2  # Selection of new isle
                 elif len(words) == 1:
-                    mouse_actions_sentence += 1 # Isles of length 1 account for 1 mouse action
+                    mouse_actions_sentence += 1  # Isles of length 1 account for 1 mouse action
     return mouse_actions_sentence
 
 
 def test_utils():
-
-    # s1 = "por ejemplo , si se pueden utilizar fuentes especiales tales en los documentos pero no se encuentran disponibles en esta impresora , se puede usar la utilidad de administración de fuentes para transferir las fuentes de la impresora ."
-    # s2 = "por ejemplo , si tiene fuentes especiales que se emplean en documentos pero que no están disponibles en la ( s ) impresora ( s ) , puede usar la utilidad de administración de fuentes para transferir las fuentes deseadas a las impresoras ."
 
     s1 = 'Guia de Servicios de exploracion de red de CentreWare xi'
     s2 = 'Guia de instalaci\xc3\xb3n de Servicios de exploracion de red de CentreWare xi'
@@ -120,13 +117,3 @@ def test_utils():
     print "Sentence 1:", s1
     print "Sentence 2:", s2
     print find_isles(s1.split(), s2.split())
-
-
-if __name__ == "__main__":
-    #test_utils()
-    isle_indices = [(0, [3041, 3]), (2, [7878])]
-    old_isles= [[3], [7878], [3041]]
-
-    print compute_mouse_movements(isle_indices, old_isles), "mouse actions"
-
-
