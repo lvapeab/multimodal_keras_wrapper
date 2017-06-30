@@ -469,6 +469,7 @@ class Dataset(object):
         self.mapping = dict()  # Source -- Target predefined word mapping
         self.BPE = None  # Byte Pair Encoding instance
         self.BPE_separator = None
+        self.BPE_built = False
         #################################################
 
         ############################ Parameters used for inputs of type 'video' or 'video-features'
@@ -1434,6 +1435,7 @@ class Dataset(object):
         with open(codes, 'r') as cods:
             self.BPE = BPE(cods, separator, vocabulary, glossaries)
         self.BPE_separator = separator
+        self.BPE_built = True
 
     def load3DLabels(self, bbox_list, nClasses, dataAugmentation, daRandomParams, img_size, size_crop, image_list):
         '''
@@ -2037,6 +2039,8 @@ class Dataset(object):
         :param caption: Caption to detokenize.
         :return: Encoded version of caption.
         """
+        if not self.BPE_built:
+            raise Exception, 'Prior to use the "tokenize_bpe" method, you should invoke "build_BPE"'
         tokenized = re.sub('[\n\t]+', '', caption.strip())
         tokenized = self.BPE.segment(tokenized).strip()
         return tokenized
