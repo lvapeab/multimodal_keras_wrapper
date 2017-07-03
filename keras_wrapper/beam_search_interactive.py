@@ -323,7 +323,7 @@ class BeamSearchEnsemble:
                                                 normalization=params['normalize'],
                                                 data_augmentation=False,
                                                 mean_substraction=params['mean_substraction'],
-                                                predict=True).generator()
+                                                predict=True)#.generator()
             else:
                 n_samples = params['n_samples']
                 num_iterations = int(math.ceil(float(n_samples)))  # / params['batch_size']))
@@ -338,7 +338,7 @@ class BeamSearchEnsemble:
                                                 data_augmentation=False,
                                                 mean_substraction=params['mean_substraction'],
                                                 predict=False,
-                                                random_samples=n_samples).generator()
+                                                random_samples=n_samples)#.generator()
             if params['n_samples'] > 0:
                 references = []
                 sources_sampling = []

@@ -1,5 +1,5 @@
 #!/usr/bin/python
-# -*- coding: latin-1 -*-
+# encoding: utf-8
 import numpy as np
 
 

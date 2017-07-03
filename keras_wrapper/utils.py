@@ -1,3 +1,4 @@
+# encoding: utf-8
 from keras.layers.convolutional import ZeroPadding2D
 
 import numpy as np
