@@ -24,7 +24,7 @@ class OnlineTrainer:
         self.sampler = sampler
         self.verbose = verbose
         self.params_prediction = self.checkParameters(params_prediction) if params_prediction is not None else {}
-        self.params_training = self.checkParameters(params_training, params_training=True) if params_training\
+        self.params_training = self.checkParameters(params_training, params_training=True) if params_training \
                                                                                               is not None else None
         target_vocabulary_id = params_prediction['dataset_outputs'][0] if params_prediction is not None else 'target_text'
         self.index2word_y = self.dataset.vocabulary[target_vocabulary_id]['idx2words']
@@ -189,7 +189,7 @@ class OnlineTrainer:
                 else:
                     params = copy.copy(self.params_training)
                     del params['use_custom_loss']
-                    del params['custom_loss']
+                    del params['n_best_optimizer']
                     model.trainNetFromSamples([x, state_below_y], y, params)
                     self.n_updates += 1
 
@@ -207,7 +207,7 @@ class OnlineTrainer:
         state_below_y = X[1]
         y = Y[0]
 
-
+        print "self.params_training", self.params_training
         if self.params_training.get('use_custom_loss', False):
             raise Exception, 'Custom loss + train_online (interactive) still unimplemented. Refer to sample_and_train_online'
             state_below_h = np.asarray([np.append(self.dataset.extra_words['<null>'], trans_indices[:-1])])
@@ -288,7 +288,8 @@ class OnlineTrainer:
             # 3. Update net parameters with the corrected samples
             for model in self.models:
                 if self.params_training.get('use_custom_loss', False):
-                    raise Exception, 'Custom loss optimizers + train_online (interactive) still unimplemented. Refer to sample_and_train_online'
+                    raise Exception, 'Custom loss optimizers + train_online (interactive) ' \
+                                     'still unimplemented. Refer to sample_and_train_online'
 
                     weights = model.trainable_weights
                     weights.sort(key=lambda x: x.name if x.name else x.auto_name)
@@ -316,7 +317,7 @@ class OnlineTrainer:
                 else:
                     params = copy.copy(self.params_training)
                     del params['use_custom_loss']
-                    del params['custom_loss']
+                    del params['n_best_optimizer']
                     model.trainNetFromSamples([x, state_below_y], y, params)
                     self.n_updates += 1
 
@@ -339,7 +340,6 @@ class OnlineTrainer:
                                      'model_outputs': ['target_text'],
                                      'dataset_inputs': ['source_text', 'state_below'],
                                      'dataset_outputs': ['target_text'],
-                                     'alpha_factor': 1.0,
                                      'sampling_type': 'max_likelihood',
                                      'words_so_far': False,
                                      'optimized_search': False,
@@ -352,12 +352,21 @@ class OnlineTrainer:
                                      'mapping': None,
                                      'apply_detokenization': False,
                                      'normalize_probs': False,
+                                     'alpha_factor': 1.0,
+                                     'coverage_penalty': False,
+                                     'length_penalty': False,
+                                     'length_norm_factor': 0.0,
+                                     'coverage_norm_factor': 0.0,
+                                     'output_max_length_depending_on_x': False,
+                                     'output_max_length_depending_on_x_factor': 3,
+                                     'output_min_length_depending_on_x': False,
+                                     'output_min_length_depending_on_x_factor': 2,
                                      'detokenize_f': 'detokenize_none',
-                                     'n_best_optimizer': False
+                                     'n_best_optimizer': False,
                                      }
         default_params_training = {'batch_size': 1,
                                    'use_custom_loss': False,
-                                   'custom_loss': False,
+                                   'n_best_optimizer': False,
                                    'n_parallel_loaders': 8,
                                    'n_epochs': 1,
                                    'shuffle': False,
