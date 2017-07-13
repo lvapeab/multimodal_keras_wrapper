@@ -927,7 +927,7 @@ class Model_Wrapper(object):
         self.model.fit(x,
                        y,
                        batch_size=min(params['batch_size'], len(x)),
-                       nb_epoch=params['n_epochs'],
+                       epochs=params['n_epochs'],
                        verbose=params['verbose'],
                        callbacks=callbacks,
                        validation_data=None,
@@ -941,7 +941,7 @@ class Model_Wrapper(object):
 
         # Check input parameters and recover default values if needed
         default_params = {'batch_size': 50, 'n_parallel_loaders': 8, 'normalize': False,
-                          'mean_substraction': True};
+                          'mean_substraction': True}
         params = self.checkParameters(parameters, default_params)
         self.testing_parameters.append(copy.copy(params))
 
