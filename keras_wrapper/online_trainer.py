@@ -118,7 +118,8 @@ class OnlineTrainer:
                     n_best_predictions.append([i, n_best_pred, pred, score])
             for model in self.models:
                 weights = model.trainable_weights
-                weights.sort(key=lambda x: x.name if x.name else x.auto_name)
+                # Weights from Keras 2 are already (topologically) sorted!
+                #weights.sort(key=lambda x: x.name if x.name else x.auto_name)
                 model.optimizer.set_weights(weights)
                 top_prob_h = np.asarray(n_best_predictions[0][1])
                 p = np.argsort([nbest[3] for nbest in n_best_predictions])
@@ -164,7 +165,8 @@ class OnlineTrainer:
             for model in self.models:
                 if self.params_training.get('use_custom_loss', False):
                     weights = model.trainable_weights
-                    weights.sort(key=lambda x: x.name if x.name else x.auto_name)
+                    # Weights from Keras 2 are already (topologically) sorted!
+                    #weights.sort(key=lambda x: x.name if x.name else x.auto_name)
                     model.optimizer.set_weights(weights)
                     for k in range(1):
                         train_inputs = [x, state_below_y, state_below_h] + [y, hyp]
@@ -243,7 +245,7 @@ class OnlineTrainer:
                     n_best_predictions.append([i, n_best_pred, pred, score])
             for model in self.models:
                 weights = model.trainable_weights
-                weights.sort(key=lambda x: x.name if x.name else x.auto_name)
+                #weights.sort(key=lambda x: x.name if x.name else x.auto_name)
                 model.optimizer.set_weights(weights)
                 top_prob_h = np.asarray(n_best_predictions[0][1])
                 p = np.argsort([nbest[3] for nbest in n_best_predictions])
@@ -292,7 +294,7 @@ class OnlineTrainer:
                                      'still unimplemented. Refer to sample_and_train_online'
 
                     weights = model.trainable_weights
-                    weights.sort(key=lambda x: x.name if x.name else x.auto_name)
+                    #weights.sort(key=lambda x: x.name if x.name else x.auto_name)
                     model.optimizer.set_weights(weights)
                     for k in range(1):
                         train_inputs = [x, state_below_y, state_below_h] + [y, hyp]
