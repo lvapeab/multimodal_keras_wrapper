@@ -96,6 +96,7 @@ class BeamSearchEnsemble:
 
         :param X: Model inputs
         :param params: Search parameters
+        :param eos_sym: <end-of-sentence> symbol
         :param null_sym: <null> symbol
         :return: UNSORTED list of [k_best_samples, k_best_scores] (k: beam size)
         """
@@ -114,8 +115,9 @@ class BeamSearchEnsemble:
         maxlen = int(len(X[params['dataset_inputs'][0]][0]) * params['output_max_length_depending_on_x_factor']) if \
             params['output_max_length_depending_on_x'] else params['maxlen']
 
-        minlen = int(len(X[params['dataset_inputs'][0]][0]) / params['output_min_length_depending_on_x_factor'] + 1e-7) if \
-            params['output_min_length_depending_on_x'] else 0
+        minlen = int(len(X[params['dataset_inputs'][0]][0]) /
+                     params['output_min_length_depending_on_x_factor'] + 1e-7) \
+            if params['output_min_length_depending_on_x'] else 0
 
         # we must include an additional dimension if the input for each timestep are all the generated "words_so_far"
         if params['words_so_far']:
@@ -302,7 +304,7 @@ class BeamSearchEnsemble:
             # Calculate how many interations are we going to perform
             if params['n_samples'] < 1:
                 n_samples = eval("self.dataset.len_" + s)
-                num_iterations = int(math.ceil(float(n_samples)))# / params['batch_size']))
+                num_iterations = int(math.ceil(float(n_samples)))  # / params['batch_size']))
 
                 # Prepare data generator: We won't use an Homogeneous_Data_Batch_Generator here
                 # TODO: We prepare data as model 0... Different data preparators for each model?
@@ -317,7 +319,7 @@ class BeamSearchEnsemble:
                                                 predict=True).generator()
             else:
                 n_samples = params['n_samples']
-                num_iterations = int(math.ceil(float(n_samples))) # / params['batch_size']))
+                num_iterations = int(math.ceil(float(n_samples)))  # / params['batch_size']))
 
                 # Prepare data generator: We won't use an Homogeneous_Data_Batch_Generator here
                 data_gen = Data_Batch_Generator(s,
@@ -379,8 +381,9 @@ class BeamSearchEnsemble:
                     if params['length_penalty'] or params['coverage_penalty']:
                         if params['length_penalty']:
                             length_penalties = [((5 + len(sample)) ** params['length_norm_factor']
-                                                 / (5+1) ** params['length_norm_factor']) # this 5 is a magic number by Google...
-                              for sample in samples]
+                                                 / (5 + 1) ** params['length_norm_factor'])
+                                                # this 5 is a magic number by Google...
+                                                for sample in samples]
                         else:
                             length_penalties = [1.0 for _ in len(samples)]
 
@@ -489,8 +492,6 @@ class BeamSearchEnsemble:
         params['n_samples'] = 1
         if self.n_best:
             n_best_list = []
-            if self.return_alphas:
-                n_best_alphas = []
         X = dict()
         for input_id in params['model_inputs']:
             X[input_id] = src_sentence
@@ -504,8 +505,8 @@ class BeamSearchEnsemble:
         if params['length_penalty'] or params['coverage_penalty']:
             if params['length_penalty']:
                 length_penalties = [((5 + len(sample)) ** params['length_norm_factor']
-                                     / (5+1) ** params['length_norm_factor']) # this 5 is a magic number by Google...
-                  for sample in samples]
+                                     / (5 + 1) ** params['length_norm_factor'])  # this 5 is a magic number by Google...
+                                    for sample in samples]
             else:
                 length_penalties = [1.0 for _ in len(samples)]
 
@@ -701,7 +702,7 @@ class BeamSearchEnsemble:
             params['pad_on_batch'] = self.dataset.pad_on_batch[params['dataset_inputs'][-1]]
             # Calculate how many interations are we going to perform
             n_samples = eval("self.dataset.len_" + s)
-            num_iterations = int(math.ceil(float(n_samples)))# / params['batch_size']))
+            num_iterations = int(math.ceil(float(n_samples)))  # / params['batch_size']))
 
             # Prepare data generator: We won't use an Homogeneous_Data_Batch_Generator here
             # TODO: We prepare data as model 0... Different data preparators for each model?
@@ -744,13 +745,15 @@ class BeamSearchEnsemble:
                     for input_id in params['model_inputs']:
                         x[input_id] = np.asarray([X[input_id][i]])
                     sample = one_hot_2_indices([Y[params['dataset_outputs'][params['output_text_index']]][i]],
-                                          pad_sequences=True, verbose=0)[0]
-                    score, alphas = self.score_cond_model(x, sample, params, null_sym=self.dataset.extra_words['<null>'])
+                                               pad_sequences=True, verbose=0)[0]
+                    score, alphas = self.score_cond_model(x, sample, params,
+                                                          null_sym=self.dataset.extra_words['<null>'])
 
                     if params['length_penalty'] or params['coverage_penalty']:
                         if params['length_penalty']:
                             length_penalty = ((5 + len(sample)) ** params['length_norm_factor']
-                                                 / (5+1) ** params['length_norm_factor']) # this 5 is a magic number by Google...
+                                              / (5 + 1) ** params[
+                                                  'length_norm_factor'])  # this 5 is a magic number by Google...
                         else:
                             length_penalty = 1.0
 
@@ -863,15 +866,16 @@ class BeamSearchEnsemble:
             for input_id in params['model_inputs']:
                 x[input_id] = np.asarray([X[input_id][i]])
             sample = one_hot_2_indices([Y[params['dataset_outputs'][params['output_text_index']]][i]],
-                                  pad_sequences=params['pad_on_batch'], verbose=0)[0]
+                                       pad_sequences=params['pad_on_batch'], verbose=0)[0]
             score, alphas = self.score_cond_model(x, sample,
-                                          params,
-                                          null_sym=self.dataset.extra_words['<null>'])
+                                                  params,
+                                                  null_sym=self.dataset.extra_words['<null>'])
 
             if params['length_penalty'] or params['coverage_penalty']:
                 if params['length_penalty']:
                     length_penalty = ((5 + len(sample)) ** params['length_norm_factor']
-                                         / (5+1) ** params['length_norm_factor']) # this 5 is a magic number by Google...
+                                      / (5 + 1) ** params[
+                                          'length_norm_factor'])  # this 5 is a magic number by Google...
                 else:
                     length_penalty = 1.0
 
@@ -926,7 +930,6 @@ class BeamSearchEnsemble:
         return params
 
 
-
 class PredictEnsemble:
     def __init__(self, models, dataset, params_prediction, postprocess_fun=None, verbose=0):
         """
@@ -963,7 +966,6 @@ class PredictEnsemble:
         # Returns
             A Numpy array of predictions.
         """
-
 
         outs_list = []
         for i, m in enumerate(models):
@@ -1110,7 +1112,6 @@ class PredictEnsemble:
                 sys.stdout.write("Predicting %d/%d  -  ETA: %ds " % (processed_samples, n_samples, int(eta)))
                 sys.stdout.flush()
             predictions[s] = np.concatenate([pred for pred in predictions[s]])
-
 
         return predictions
 
