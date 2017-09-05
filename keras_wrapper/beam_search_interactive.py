@@ -722,6 +722,8 @@ class InteractiveBeamSearchSampler:
 
         maxlen = int(len(X[params['dataset_inputs'][0]][0]) * params['output_max_length_depending_on_x_factor']) if \
             params['output_max_length_depending_on_x'] else params['maxlen']
+        if maxlen < len(fixed_words.keys()):
+            maxlen = fixed_words.keys()
 
         minlen = int(
             len(X[params['dataset_inputs'][0]][0]) / params['output_min_length_depending_on_x_factor'] + 1e-7) if \
@@ -731,7 +733,7 @@ class InteractiveBeamSearchSampler:
             if pad_on_batch else np.asarray([np.zeros(params['maxlen'])] * live_k)
 
         prev_outs = [None] * len(self.models)
-        while ii < maxlen:
+        while ii <= maxlen:
             # for every possible live sample calc prob for every possible label
             logger.log(2, "hyp_samples" + str(hyp_samples))
             logger.log(2, "hyp_scores" + str(hyp_scores))
@@ -763,7 +765,7 @@ class InteractiveBeamSearchSampler:
             if minlen > 0 and ii < minlen:
                 probs[:, eos_sym] = -np.inf
 
-            if len(unfixed_isles) > 0 or ii < max_fixed_pos:
+            if len(unfixed_isles) > 0 or ii <= max_fixed_pos:
                 log_probs[:, eos_sym] = -np.inf
 
             if len(unfixed_isles) == 0 or ii in fixed_words:  # There are no remaining isles. Regular decoding.
