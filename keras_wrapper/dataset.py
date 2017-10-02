@@ -2015,7 +2015,8 @@ class Dataset(object):
         """
         if not self.BPE_built:
             raise Exception, 'Prior to use the "tokenize_bpe" method, you should invoke "build_BPE"'
-        tokenized = self.BPE.segment(caption).strip()
+        tokenized = re.sub('[\n\t]+', '', caption.strip())
+        tokenized = self.BPE.segment(tokenized).strip()
         return tokenized
 
     def detokenize_none(self, caption):
