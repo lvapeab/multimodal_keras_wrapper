@@ -533,6 +533,9 @@ class Model_Wrapper(object):
         if not self.silence:
             logging.info("Optimizer updated, learning rate set to " + str(lr))
 
+    def compile(self,**kwargs):
+        self.model.compile(kwargs)
+
     def setName(self, model_name, plots_path=None, models_path=None, create_plots=False, clear_dirs=True):
         """
                     Changes the name (identifier) of the Model_Wrapper instance.
@@ -982,7 +985,7 @@ class Model_Wrapper(object):
 
         # Check input parameters and recover default values if needed
         default_params = {'batch_size': 50, 'n_parallel_loaders': 8, 'normalize': False,
-                          'mean_substraction': True};
+                          'mean_substraction': True}
         params = self.checkParameters(parameters, default_params)
         self.testing_parameters.append(copy.copy(params))
 
@@ -1164,7 +1167,7 @@ class Model_Wrapper(object):
         if ii > 1:  # timestep > 1 (model_next to model_next)
             for idx, next_out_name in enumerate(self.ids_outputs_next):
                 if idx == 0:
-                    in_data[self.ids_inputs_next[0]] = states_below[:, -1].reshape(n_samples, 1)
+                    in_data[self.ids_inputs_next[0]] = states_below[:, -1].reshape(n_samples, -1)
                 if idx > 0:  # first output must be the output probs.
                     if next_out_name in self.matchings_next_to_next.keys():
                         next_in_name = self.matchings_next_to_next[next_out_name]
@@ -1177,11 +1180,11 @@ class Model_Wrapper(object):
                     in_data[model_input] = np.repeat(X[model_input], n_samples, axis=0)
                 else:
                     in_data[model_input] = copy.copy(X[model_input])
-            in_data[params['model_inputs'][params['state_below_index']]] = states_below.reshape(n_samples, 1)
+            in_data[params['model_inputs'][params['state_below_index']]] = states_below.reshape(n_samples, -1)
         elif ii == 1:  # timestep == 1 (model_init to model_next)
             for idx, init_out_name in enumerate(self.ids_outputs_init):
                 if idx == 0:
-                    in_data[self.ids_inputs_next[0]] = states_below[:, -1].reshape(n_samples, 1)
+                    in_data[self.ids_inputs_next[0]] = states_below[:, -1].reshape(n_samples, -1)
                 if idx > 0:  # first output must be the output probs.
                     if init_out_name in self.matchings_init_to_next.keys():
                         next_in_name = self.matchings_init_to_next[init_out_name]
