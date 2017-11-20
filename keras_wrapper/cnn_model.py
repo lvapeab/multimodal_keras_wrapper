@@ -338,12 +338,12 @@ class Model_Wrapper(object):
         """
             Model_Wrapper object constructor.
 
-            :param nOutput: number of outputs of the network. Only valid if 'structure_path' == None.
+            :param nOutput: number of outputs of the network. Only valid if 'structure_path' is None.
             :param type: network name type (corresponds to any method defined in the section 'MODELS' of this class).
-                         Only valid if 'structure_path' == None.
+                         Only valid if 'structure_path' is None.
             :param silence: set to True if you don't want the model to output informative messages
             :param input_shape: array with 3 integers which define the images' input shape [height, width, channels].
-                                Only valid if 'structure_path' == None.
+                                Only valid if 'structure_path' is None.
             :param structure_path: path to a Keras' model json file.
                                    If we speficy this parameter then 'type' will be only an informative parameter.
             :param weights_path: path to the pre-trained weights file (if None, then it will be randomly initialized)
@@ -625,7 +625,7 @@ class Model_Wrapper(object):
         # If it is a Sequential model
         if isinstance(self.model, Sequential):
             # Remove old layers
-            for i in range(num_remove):
+            for _ in range(num_remove):
                 removed_layers.append(self.model.layers.pop())
                 removed_params.append(self.model.params.pop())
 
@@ -731,6 +731,9 @@ class Model_Wrapper(object):
                           'lr_reducer_exp_base': 0.5,
                           'lr_half_life': 50000}
         params = self.checkParameters(parameters, default_params)
+        # Set params['start_reduction_on_epoch'] = params['lr_decay'] by default
+        if params['lr_decay'] is not None and 'start_reduction_on_epoch' not in parameters.keys():
+            params['start_reduction_on_epoch'] = params['lr_decay']
         save_params = copy.copy(params)
         del save_params['extra_callbacks']
         self.training_parameters.append(save_params)
@@ -886,7 +889,7 @@ class Model_Wrapper(object):
         if 'val' in params['eval_on_sets']:
             # Calculate how many validation interations are we going to perform per test
             n_valid_samples = ds.len_val
-            if params['num_iterations_val'] == None:
+            if params['num_iterations_val'] is None:
                 params['num_iterations_val'] = int(math.ceil(float(n_valid_samples) / params['batch_size']))
 
             # prepare data generator
@@ -1350,7 +1353,7 @@ class Model_Wrapper(object):
             # SCORE
             state_below = []
             if params['optimized_search']:
-                prev_out_new = [[] for v in prev_out]
+                prev_out_new = [[] for _ in prev_out]
             for pos_sample, sample_identifier in enumerate(
                     sample_identifier_prediction):  # process one sample at a time
 
@@ -1551,8 +1554,7 @@ class Model_Wrapper(object):
             state_below = np.asarray([[null_sym]] * live_k) if pad_on_batch else np.asarray(
                 [np.zeros((maxlen, maxlen))] * live_k)
         else:
-            state_below = np.asarray([null_sym] * live_k) if pad_on_batch else np.asarray(
-                [np.zeros(maxlen)] * live_k)
+            state_below = np.asarray([null_sym] * live_k)
 
         prev_out = None
 
@@ -1631,22 +1633,11 @@ class Model_Wrapper(object):
                 break
             state_below = np.asarray(hyp_samples, dtype='int64')
 
-            # we must include an additional dimension if the input for each timestep are all the generated words so far
-            if pad_on_batch:
-                state_below = np.hstack((np.zeros((state_below.shape[0], 1), dtype='int64') + null_sym, state_below))
-                if params['words_so_far']:
-                    state_below = np.expand_dims(state_below, axis=0)
-            else:
-                state_below = np.hstack((np.zeros((state_below.shape[0], 1), dtype='int64'), state_below,
-                                         np.zeros((state_below.shape[0],
-                                                   max(maxlen - state_below.shape[1] - 1, 0)),
-                                                  dtype='int64')))
+            state_below = np.hstack((np.zeros((state_below.shape[0], 1), dtype='int64') + null_sym, state_below))
 
-                if params['words_so_far']:
-                    state_below = np.expand_dims(state_below, axis=0)
-                    state_below = np.hstack((state_below,
-                                             np.zeros((state_below.shape[0], maxlen - state_below.shape[1],
-                                                       state_below.shape[2]))))
+            # we must include an additional dimension if the input for each timestep are all the generated words so far
+            if params['words_so_far']:
+                state_below = np.expand_dims(state_below, axis=0)
 
             if params['optimized_search'] and ii > 0:
                 # filter next search inputs w.r.t. remaining samples
@@ -1820,7 +1811,7 @@ class Model_Wrapper(object):
                 sampled = 0
                 start_time = time.time()
                 eta = -1
-                for j in range(num_iterations):
+                for _ in range(num_iterations):
                     data = data_gen.next()
                     X = dict()
                     if params['n_samples'] > 0:
@@ -1918,7 +1909,8 @@ class Model_Wrapper(object):
 
                 if params['pos_unk']:
                     if eval('ds.loaded_raw_' + s + '[0]'):
-                        sources = file2list(eval('ds.X_raw_' + s + '["raw_' + params['model_inputs'][0] + '"]'))
+                        sources = file2list(eval('ds.X_raw_' + s + '["raw_' + params['model_inputs'][0] + '"]'),
+                                            stripfile=False)
                     predictions[s] = (np.asarray(best_samples), np.asarray(best_alphas), sources)
                 else:
                     predictions[s] = np.asarray(best_samples)
@@ -2120,8 +2112,8 @@ class Model_Wrapper(object):
                         for input_id in params['model_inputs']:
                             if params['temporally_linked'] and input_id in self.ids_temporally_linked_inputs:
                                 link = int(X[params['link_index_id']][i])
-                                if link not in previous_outputs[
-                                    input_id].keys():  # input to current sample was not processed yet
+                                if link not in previous_outputs[input_id].keys():
+                                    # input to current sample was not processed yet
                                     link = -1
                                 prev_x = [ds.vocabulary[input_id]['idx2words'][w] for w in
                                           previous_outputs[input_id][link]]
@@ -2199,7 +2191,8 @@ class Model_Wrapper(object):
 
                 if params['pos_unk']:
                     if eval('ds.loaded_raw_' + s + '[0]'):
-                        sources = file2list(eval('ds.X_raw_' + s + '["raw_' + params['model_inputs'][0] + '"]'))
+                        sources = file2list(eval('ds.X_raw_' + s + '["raw_' + params['model_inputs'][0] + '"]'),
+                                            stripfile=False)
                     predictions[s] = (np.asarray(best_samples), np.asarray(best_alphas), sources)
                 else:
                     predictions[s] = np.asarray(best_samples)
@@ -2643,7 +2636,7 @@ class Model_Wrapper(object):
         if len(self.inputsMapping.keys()) == 1:  # single input
             X = X[self.inputsMapping[0]]
         else:
-            X_new = [0 for i in range(len(self.inputsMapping.keys()))]  # multiple inputs
+            X_new = [0 for _ in range(len(self.inputsMapping.keys()))]  # multiple inputs
             for in_model, in_ds in self.inputsMapping.iteritems():
                 X_new[in_model] = X[in_ds]
             X = X_new
