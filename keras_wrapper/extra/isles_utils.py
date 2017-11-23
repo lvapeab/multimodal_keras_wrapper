@@ -22,6 +22,12 @@ def parse_input(line, dataset, idx2word):
 
 
 def longest_common_substring(s1, s2):
+    """
+    Gets the longest common substring between two strings
+    :param s1:
+    :param s2:
+    :return:
+    """
     m = [[0] * (1 + len(s2)) for _ in xrange(1 + len(s1))]
     longest, x_longest, y_longest = 0, 0, 0
     for x in xrange(1, 1 + len(s1)):
@@ -36,6 +42,35 @@ def longest_common_substring(s1, s2):
                 m[x][y] = 0
     return s1[x_longest - longest: x_longest], x_longest - longest, y_longest - longest
 
+
+def common_prefix(s1, s2):
+    """
+    Gets the common prefix between two strings
+    :param s1: String 1
+    :param s2: String 2
+    :return: Common prefix
+    """
+    for i in range(min(len(s1), len(s2))):
+        if s1[i] != s2[i]:
+            return i, s1[:i]
+    return i + 1, s1[:i+1]
+
+
+def longest_common_suffix(list1, list2):
+    """
+    Finds the longest common suffix in a list given another list.
+    :param list1: List of suffix candidates
+    :param list: List in which to search
+    :return:
+    """
+    suffix_list = [list1[:i + 1] for i in range(len(list1))]
+    suffix_list = sorted(suffix_list, key=len)
+    suffix_list.reverse()
+    # Find the longest common suffix
+    for i, suffix in enumerate(suffix_list):
+        if list2[-len(suffix):] == suffix:
+            return suffix, -len(suffix)
+    return [], 0
 
 def find_isles(s1, s2, x=0, y=0):
     """
@@ -77,6 +112,12 @@ def is_sublist(list1, list2):
 
 
 def subfinder(pattern, mylist):
+    """
+    Finds a pattern in a given list
+    :param pattern:
+    :param mylist:
+    :return:
+    """
     for start_pos in range(len(mylist)):
         if mylist[start_pos] == pattern[0] and mylist[start_pos:start_pos + len(pattern)] == pattern:
             return pattern, start_pos

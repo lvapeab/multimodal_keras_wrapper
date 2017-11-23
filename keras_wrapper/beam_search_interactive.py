@@ -646,8 +646,8 @@ class InteractiveBeamSearchSampler:
         else:
             return probs
 
-    def interactive_beam_search(self, X, params,
-                                fixed_words=None, max_N=0, isles=None, eos_sym=0, null_sym=2, idx2word=None):
+    def interactive_beam_search(self, X, params, fixed_words=None, max_N=0, isles=None,
+                                valid_next_words=None, eos_sym=0, null_sym=2, idx2word=None):
         """
         Beam search method for Cond models.
         (https://en.wikibooks.org/wiki/Artificial_Intelligence/Search/Heuristic_search/Beam_search)
@@ -677,6 +677,7 @@ class InteractiveBeamSearchSampler:
         :param fixed_words: Dictionary of words fixed by the user: {position: word}
         :param max_N: Maximum number of words to generate between two isles.
         :param isles: Isles fixed by the user. List of (isle_index, [words]) (Although isle_index is never used
+        :param valid_next_words: List of candidate words to be the next one to generate (after generating fixed_words)
         :param eos_sym: End-of-sentence index
         :param idx2word:  Mapping between indices and words
         :param null_sym: <null> symbol
@@ -720,10 +721,12 @@ class InteractiveBeamSearchSampler:
             sample_alphas = []
             hyp_alphas = [[]] * live_k
 
+        len_fixed_words = len(fixed_words.keys())
+
         maxlen = int(len(X[params['dataset_inputs'][0]][0]) * params['output_max_length_depending_on_x_factor']) if \
             params['output_max_length_depending_on_x'] else params['maxlen']
-        if maxlen < len(fixed_words.keys()):
-            maxlen = fixed_words.keys()
+        if maxlen < len_fixed_words:
+            maxlen += len_fixed_words
 
         minlen = int(
             len(X[params['dataset_inputs'][0]][0]) / params['output_min_length_depending_on_x_factor'] + 1e-7) if \
@@ -733,6 +736,11 @@ class InteractiveBeamSearchSampler:
             if pad_on_batch else np.asarray([np.zeros(params['maxlen'])] * live_k)
 
         prev_outs = [None] * len(self.models)
+        if valid_next_words is not None:
+            # We need to generate at least the partial hypothesis provided by the user
+            minlen += 1
+            maxlen += 1
+
         while ii <= maxlen:
             # for every possible live sample calc prob for every possible label
             logger.log(2, "hyp_samples" + str(hyp_samples))
@@ -757,7 +765,7 @@ class InteractiveBeamSearchSampler:
             # total score for every sample is sum of -log of word prb
             log_probs = np.log(probs)
             # Adjust log probs according to search restrictions
-            if len(fixed_words.keys()) == 0:
+            if len_fixed_words == 0:
                 max_fixed_pos = 0
             else:
                 max_fixed_pos = max(fixed_words.keys())
@@ -766,6 +774,13 @@ class InteractiveBeamSearchSampler:
                 probs[:, eos_sym] = -np.inf
 
             if len(unfixed_isles) > 0 or ii <= max_fixed_pos:
+                log_probs[:, eos_sym] = -np.inf
+
+            if valid_next_words is not None and ii == len_fixed_words:
+                logger.log(3, 'valid_next_words: ' + str(valid_next_words))
+                if valid_next_words != dict():
+                    next_word_antiprefix = [idx for idx in idx2word.keys() if idx not in valid_next_words]
+                    log_probs[:, next_word_antiprefix] = -np.inf
                 log_probs[:, eos_sym] = -np.inf
 
             if len(unfixed_isles) == 0 or ii in fixed_words:  # There are no remaining isles. Regular decoding.
@@ -1207,14 +1222,16 @@ class InteractiveBeamSearchSampler:
         else:
             return samples, sample_scores, None
 
-    def sample_beam_search_interactive(self, src_sentence, fixed_words=None, max_N=0, isles=None, idx2word=None):
+    def sample_beam_search_interactive(self, src_sentence, fixed_words=None, max_N=0,
+                                       isles=None, valid_next_words=None, idx2word=None):
         """
         Samples a sentence using the restrictions provided in fixed_words.
         :param src_sentence: Source sentence to translate.
         :param fixed_words: Dictionary of words fixed by the user: {position: word}.
         :param max_N: Maximum steps to look forward (Eq. 12 from the "Interactive neural machine translation" paper).
-        :param isles: Isles fixed by the user. List of (isle_index, [words]) (Although isle_index is never used
-        :param idx2word: Mapping between indices and words
+        :param isles: Isles fixed by the user. List of (isle_index, [words]) (Although isle_index is never used).
+        :param valid_next_words: List of candidate words to be the next one to generate (after generating fixed_words).
+        :param idx2word: Mapping between indices and words.
         :return:
         """
         # Check input parameters and recover default values if needed
@@ -1270,6 +1287,7 @@ class InteractiveBeamSearchSampler:
                                                                fixed_words=fixed_words,
                                                                max_N=max_N,
                                                                isles=isles,
+                                                               valid_next_words=valid_next_words,
                                                                null_sym=self.dataset.extra_words['<null>'],
                                                                idx2word=idx2word)
         if params['length_penalty'] or params['coverage_penalty']:
