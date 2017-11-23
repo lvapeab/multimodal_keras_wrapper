@@ -1219,17 +1219,16 @@ class Dataset(object):
 
         # Tokenize sentences
         if max_text_len != 0:  # will only tokenize if we are not using the whole sentence as a class
-
             # Check if tokenization method exists
-	    if hasattr(self, tokenization):
-	        if 'bpe' in tokenization.lower():
-	    	    assert bpe_codes is not None, 'bpe_codes must be specified when applying a BPE tokenization.'
-		    self.build_bpe(bpe_codes, separator)
-		tokfun = eval('self.' + tokenization)
-		if not self.silence:
-		    logging.info('\tApplying tokenization function: "' + tokenization + '".')
-	    else:
-	        raise Exception('Tokenization procedure "' + tokenization + '" is not implemented.')
+            if hasattr(self, tokenization):
+                if 'bpe' in tokenization.lower():
+                    assert bpe_codes is not None, 'bpe_codes must be specified when applying a BPE tokenization.'
+                    self.build_bpe(bpe_codes, separator)
+                tokfun = eval('self.' + tokenization)
+                if not self.silence:
+                    logging.info('\tApplying tokenization function: "' + tokenization + '".')
+            else:
+                raise Exception('Tokenization procedure "' + tokenization + '" is not implemented.')
 
             for i in range(len(sentences)):
                 sentences[i] = tokfun(sentences[i])
@@ -2068,7 +2067,7 @@ class Dataset(object):
         :return: Detokenized version of caption.
         """
         bpe_detokenization = re.compile('(' + separator + ' )|(' + separator + ' ?$)')
-        detokenized = bpe_detokenization.sub("", str(caption).strip())
+        detokenized = bpe_detokenization.sub("", caption.strip())
         return detokenized
 
     @staticmethod
