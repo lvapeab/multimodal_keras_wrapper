@@ -724,7 +724,8 @@ class Model_Wrapper(object):
                           'num_iterations_val': None,
                           'n_parallel_loaders': 8,
                           'normalize': False,
-                          'mean_substraction': True,
+                          'normalization_type': None,
+                          'mean_substraction': False,
                           'data_augmentation': True,
                           'verbose': 1, 'eval_on_sets': ['val'],
                           'reload_epoch': 0,
@@ -791,7 +792,8 @@ class Model_Wrapper(object):
                           'num_iterations_val': None,
                           'n_parallel_loaders': 8,
                           'normalize': False,
-                          'mean_substraction': True,
+                          'normalization_type': None,
+                          'mean_substraction': False,
                           'data_augmentation': True,
                           'verbose': 1,
                           'eval_on_sets': ['val'],
@@ -873,6 +875,7 @@ class Model_Wrapper(object):
                                                          batch_size=params['batch_size'],
                                                          joint_batches=params['joint_batches'],
                                                          normalization=params['normalize'],
+                                                         normalization_type=params['normalization_type'],
                                                          data_augmentation=params['data_augmentation'],
                                                          mean_substraction=params['mean_substraction']).generator()
         else:
@@ -882,6 +885,7 @@ class Model_Wrapper(object):
                                              state['n_iterations_per_epoch'],
                                              batch_size=params['batch_size'],
                                              normalization=params['normalize'],
+                                             normalization_type=params['normalization_type'],
                                              data_augmentation=params['data_augmentation'],
                                              mean_substraction=params['mean_substraction'],
                                              shuffle=params['shuffle']).generator()
@@ -897,8 +901,10 @@ class Model_Wrapper(object):
             val_gen = Data_Batch_Generator('val', self, ds, params['num_iterations_val'],
                                            batch_size=params['batch_size'],
                                            normalization=params['normalize'],
+                                           normalization_type=params['normalization_type'],
                                            data_augmentation=False,
-                                           mean_substraction=params['mean_substraction']).generator()
+                                           mean_substraction=params['mean_substraction'],
+                                           shuffle=False).generator()
         else:
             val_gen = None
             n_valid_samples = None
@@ -988,8 +994,11 @@ class Model_Wrapper(object):
     def testNet(self, ds, parameters, out_name=None):
 
         # Check input parameters and recover default values if needed
-        default_params = {'batch_size': 50, 'n_parallel_loaders': 8, 'normalize': False,
-                          'mean_substraction': True}
+        default_params = {'batch_size': 50,
+                          'n_parallel_loaders': 8,
+                          'normalize': True,
+                          'normalization_type': None,
+                          'mean_substraction': False}
         params = self.checkParameters(parameters, default_params)
         self.testing_parameters.append(copy.copy(params))
 
@@ -1004,6 +1013,7 @@ class Model_Wrapper(object):
         data_gen = Data_Batch_Generator('test', self, ds, num_iterations,
                                         batch_size=params['batch_size'],
                                         normalization=params['normalize'],
+                                        normalization_type=params['normalization_type'],
                                         data_augmentation=False,
                                         mean_substraction=params['mean_substraction']).generator()
 
@@ -1701,10 +1711,16 @@ class Model_Wrapper(object):
         if parameters is None:
             parameters = dict()
         # Check input parameters and recover default values if needed
-        default_params = {'batch_size': 50, 'n_parallel_loaders': 8,
-                          'beam_size': 5, 'beam_batch_size': 50,
-                          'normalize': False, 'mean_substraction': True,
-                          'predict_on_sets': ['val'], 'maxlen': 20, 'n_samples': -1,
+        default_params = {'batch_size': 50,
+                          'n_parallel_loaders': 8,
+                          'beam_size': 5,
+                          'beam_batch_size': 50,
+                          'normalize': True,
+                          'normalization_type': None,
+                          'mean_substraction': False,
+                          'predict_on_sets': ['val'],
+                          'maxlen': 20,
+                          'n_samples': -1,
                           'model_inputs': ['source_text', 'state_below'],
                           'model_outputs': ['description'],
                           'dataset_inputs': ['source_text', 'state_below'],
@@ -1787,6 +1803,7 @@ class Model_Wrapper(object):
                     data_gen_instance = Data_Batch_Generator(s, self, ds, num_iterations,
                                                              batch_size=params['batch_size'],
                                                              normalization=params['normalize'],
+                                                             normalization_type=params['normalization_type'],
                                                              data_augmentation=False,
                                                              mean_substraction=params['mean_substraction'],
                                                              predict=True)
@@ -1799,6 +1816,7 @@ class Model_Wrapper(object):
                     data_gen_instance = Data_Batch_Generator(s, self, ds, num_iterations,
                                                              batch_size=params['batch_size'],
                                                              normalization=params['normalize'],
+                                                             normalization_type=params['normalization_type'],
                                                              data_augmentation=False,
                                                              mean_substraction=params['mean_substraction'],
                                                              predict=False,
@@ -1958,9 +1976,11 @@ class Model_Wrapper(object):
         # Check input parameters and recover default values if needed
         default_params = {'max_batch_size': 50,
                           'n_parallel_loaders': 8,
-                          'beam_size': 5, 'beam_batch_size': 50,
-                          'normalize': False,
-                          'mean_substraction': True,
+                          'beam_size': 5,
+                          'beam_batch_size': 50,
+                          'normalize': True,
+                          'normalization_type': None,
+                          'mean_substraction': False,
                           'predict_on_sets': ['val'],
                           'maxlen': 20,
                           'n_samples': -1,
@@ -2053,6 +2073,7 @@ class Model_Wrapper(object):
                     data_gen_instance = Data_Batch_Generator(s, self, ds, num_iterations,
                                                              batch_size=1,
                                                              normalization=params['normalize'],
+                                                             normalization_type=params['normalization_type'],
                                                              data_augmentation=False,
                                                              mean_substraction=params['mean_substraction'],
                                                              predict=True)
@@ -2065,6 +2086,7 @@ class Model_Wrapper(object):
                     data_gen_instance = Data_Batch_Generator(s, self, ds, num_iterations,
                                                              batch_size=1,
                                                              normalization=params['normalize'],
+                                                             normalization_type=params['normalization_type'],
                                                              data_augmentation=False,
                                                              mean_substraction=params['mean_substraction'],
                                                              predict=False,
@@ -2226,8 +2248,9 @@ class Model_Wrapper(object):
         # Check input parameters and recover default values if needed
         default_params = {'batch_size': 50,
                           'n_parallel_loaders': 8,
-                          'normalize': False,
-                          'mean_substraction': True,
+                          'normalize': True,
+                          'normalization_type': None,
+                          'mean_substraction': False,
                           'n_samples': None,
                           'init_sample': -1,
                           'final_sample': -1,
@@ -2258,6 +2281,7 @@ class Model_Wrapper(object):
                                                 num_iterations,
                                                 batch_size=params['batch_size'],
                                                 normalization=params['normalize'],
+                                                normalization_type=params['normalization_type'],
                                                 data_augmentation=False,
                                                 mean_substraction=params['mean_substraction'],
                                                 init_sample=params['init_sample'],
@@ -2274,6 +2298,7 @@ class Model_Wrapper(object):
                                                 num_iterations,
                                                 batch_size=params['batch_size'],
                                                 normalization=params['normalize'],
+                                                normalization_type=params['normalization_type'],
                                                 data_augmentation=False,
                                                 mean_substraction=params['mean_substraction'],
                                                 predict=True,
@@ -2431,9 +2456,15 @@ class Model_Wrapper(object):
         """
 
         # Check input parameters and recover default values if needed
-        default_params = {'batch_size': 50, 'n_parallel_loaders': 8, 'beam_size': 5,
-                          'normalize': False, 'mean_substraction': True,
-                          'predict_on_sets': ['val'], 'maxlen': 20, 'n_samples': -1,
+        default_params = {'batch_size': 50,
+                          'n_parallel_loaders': 8,
+                          'beam_size': 5,
+                          'normalize': True,
+                          'normalization_type': None,
+                          'mean_substraction': False,
+                          'predict_on_sets': ['val'],
+                          'maxlen': 20,
+                          'n_samples': -1,
                           'model_inputs': ['source_text', 'state_below'],
                           'model_outputs': ['description'],
                           'dataset_inputs': ['source_text', 'state_below'],
@@ -2469,6 +2500,7 @@ class Model_Wrapper(object):
                                             shuffle=False,
                                             batch_size=params['batch_size'],
                                             normalization=params['normalize'],
+                                            normalization_type=params['normalization_type'],
                                             data_augmentation=False,
                                             mean_substraction=params['mean_substraction'],
                                             predict=False).generator()

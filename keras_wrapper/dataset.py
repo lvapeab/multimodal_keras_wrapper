@@ -14,8 +14,8 @@ from operator import add
 
 import numpy as np
 from PIL import Image as pilimage
-from scipy import misc
 from scipy import ndimage
+from skimage import transform
 
 from extra.read_write import create_dir_if_not_exists
 from keras.utils import np_utils
@@ -78,9 +78,10 @@ class Data_Batch_Generator(object):
                  dataset,
                  num_iterations,
                  batch_size=50,
-                 normalization=False,
+                 normalization=True,
+                 normalization_type=None,
                  data_augmentation=True,
-                 mean_substraction=True,
+                 mean_substraction=False,
                  predict=False,
                  random_samples=-1,
                  shuffle=True,
@@ -117,6 +118,7 @@ class Data_Batch_Generator(object):
                        'data_augmentation': data_augmentation,
                        'mean_substraction': mean_substraction,
                        'normalization': normalization,
+                       'normalization_type': normalization_type,
                        'num_iterations': num_iterations,
                        'random_samples': random_samples,
                        'shuffle': shuffle}
@@ -172,6 +174,7 @@ class Data_Batch_Generator(object):
                     X_batch = self.dataset.getX_FromIndices(self.set_split,
                                                             indices,
                                                             normalization=self.params['normalization'],
+                                                            normalization_type=self.params['normalization_type'],
                                                             meanSubstraction=self.params['mean_substraction'],
                                                             dataAugmentation=data_augmentation)
                     data = self.net.prepareData(X_batch, None)[0]
@@ -180,6 +183,7 @@ class Data_Batch_Generator(object):
                     X_batch, Y_batch = self.dataset.getXY_FromIndices(self.set_split,
                                                                       indices,
                                                                       normalization=self.params['normalization'],
+                                                                      normalization_type=self.params['normalization_type'],
                                                                       meanSubstraction=self.params['mean_substraction'],
                                                                       dataAugmentation=data_augmentation)
                     data = self.net.prepareData(X_batch, Y_batch)
@@ -190,6 +194,7 @@ class Data_Batch_Generator(object):
                     X_batch = self.dataset.getX_FromIndices(self.set_split,
                                                             indices,
                                                             normalization=self.params['normalization'],
+                                                            normalization_type=self.params['normalization_type'],
                                                             meanSubstraction=self.params['mean_substraction'],
                                                             dataAugmentation=data_augmentation)
                     data = self.net.prepareData(X_batch, None)[0]
@@ -198,6 +203,7 @@ class Data_Batch_Generator(object):
                     X_batch, Y_batch = self.dataset.getXY_FromIndices(self.set_split,
                                                                       indices,
                                                                       normalization=self.params['normalization'],
+                                                                      normalization_type=self.params['normalization_type'],
                                                                       meanSubstraction=self.params['mean_substraction'],
                                                                       dataAugmentation=data_augmentation)
                     data = self.net.prepareData(X_batch, Y_batch)
@@ -208,6 +214,7 @@ class Data_Batch_Generator(object):
                                                 init_sample,
                                                 final_sample,
                                                 normalization=self.params['normalization'],
+                                                normalization_type=self.params['normalization_type'],
                                                 meanSubstraction=self.params['mean_substraction'],
                                                 dataAugmentation=False)
                     data = self.net.prepareData(X_batch, None)[0]
@@ -215,6 +222,7 @@ class Data_Batch_Generator(object):
                     X_batch, Y_batch = self.dataset.getXY(self.set_split,
                                                           batch_size,
                                                           normalization=self.params['normalization'],
+                                                          normalization_type=self.params['normalization_type'],
                                                           meanSubstraction=self.params['mean_substraction'],
                                                           dataAugmentation=data_augmentation)
                     data = self.net.prepareData(X_batch, Y_batch)
@@ -234,8 +242,9 @@ class Homogeneous_Data_Batch_Generator(object):
                  batch_size=50,
                  joint_batches=20,
                  normalization=False,
+                 normalization_type=None,
                  data_augmentation=True,
-                 mean_substraction=True,
+                 mean_substraction=False,
                  predict=False,
                  random_samples=-1,
                  shuffle=True):
@@ -272,6 +281,7 @@ class Homogeneous_Data_Batch_Generator(object):
         self.params = {'data_augmentation': data_augmentation,
                        'mean_substraction': mean_substraction,
                        'normalization': normalization,
+                       'normalization_type': normalization_type,
                        'num_iterations': num_iterations / joint_batches,
                        'random_samples': random_samples,
                        'shuffle': shuffle,
@@ -308,6 +318,7 @@ class Homogeneous_Data_Batch_Generator(object):
         # Recovers a batch of data
         X_batch, Y_batch = self.dataset.getXY(self.set_split,
                                               batch_size,  # This batch_size value is self.batch_size * joint_batches
+                                              normalization_type=self.params['normalization_type'],
                                               normalization=self.params['normalization'],
                                               meanSubstraction=self.params['mean_substraction'],
                                               dataAugmentation=data_augmentation)
@@ -441,7 +452,7 @@ class Dataset(object):
         #    they will not be used in any way. IDs must be stored in text files with a single id per line
 
         # List of implemented input normalization functions
-        self.__available_norm_im_vid = ['0-1']  # 'image' and 'video' only
+        self.__available_norm_im_vid = ['0-1', '(-1)-1']  # 'image' and 'video' only
         self.__available_norm_feat = ['L2']  # 'image-features' and 'video-features' only
 
         # List of implemented input data augmentation functions
@@ -1524,7 +1535,7 @@ class Dataset(object):
             if not dataAugmentation or daRandomParams is None:
                 # Resize 3DLabel to crop size.
                 for j in range(nClasses):
-                    label2D = misc.imresize(label3D[j], (h_crop, w_crop))
+                    label2D = transform.resize(label3D[j], (h_crop, w_crop))
                     maxval = np.max(label2D)
                     if maxval > 0:
                         label2D /= maxval
@@ -1533,7 +1544,7 @@ class Dataset(object):
                 label3D_rs = np.zeros((nClasses, h_crop, w_crop), dtype=np.float32)
                 # Crop the labels (random crop)
                 for j in range(nClasses):
-                    label2D = misc.imresize(label3D[j], (h, w))
+                    label2D = transform.resize(label3D[j], (h, w))
                     maxval = np.max(label2D)
                     if maxval > 0:
                         label2D /= maxval
@@ -1606,7 +1617,7 @@ class Dataset(object):
                 labeled_im = pilimage.open(labeled_im)
                 labeled_im = np.asarray(labeled_im)
                 logging.disable(logging.NOTSET)
-                labeled_im = misc.imresize(labeled_im, (h, w))
+                labeled_im = transform.resize(labeled_im, (h, w))
             except:
                 logging.warning("WARNING!")
                 logging.warning("Can't load image " + labeled_im)
@@ -1627,7 +1638,7 @@ class Dataset(object):
             if not dataAugmentation or daRandomParams is None:
                 # Resize 3DLabel to crop size.
                 for j in range(nClasses):
-                    label2D = misc.imresize(label3D[j], (h_crop, w_crop))
+                    label2D = transform.resize(label3D[j], (h_crop, w_crop))
                     maxval = np.max(label2D)
                     if maxval > 0:
                         label2D /= maxval
@@ -1636,7 +1647,7 @@ class Dataset(object):
                 label3D_rs = np.zeros((nClasses, h_crop, w_crop), dtype=np.float32)
                 # Crop the labels (random crop)
                 for j in range(nClasses):
-                    label2D = misc.imresize(label3D[j], (h, w))
+                    label2D = transform.resize(label3D[j], (h, w))
                     maxval = np.max(label2D)
                     if maxval > 0:
                         label2D /= maxval
@@ -2535,7 +2546,7 @@ class Dataset(object):
                 labeled_im = pilimage.open(labeled_im)
                 labeled_im = np.asarray(labeled_im)
                 logging.disable(logging.NOTSET)
-                labeled_im = misc.imresize(labeled_im, (h, w))
+                labeled_im = transform.resize(labeled_im, (h, w))
             except:
                 logging.warning("WARNING!")
                 logging.warning("Can't load image " + labeled_im)
@@ -2555,7 +2566,7 @@ class Dataset(object):
 
             # Resize 3DLabel to crop size.
             for j in range(nClasses):
-                label2D = misc.imresize(label3D[j], (h_crop, w_crop))
+                label2D = transform.resize(label3D[j], (h_crop, w_crop))
                 maxval = np.max(label2D)
                 if maxval > 0:
                     label2D /= maxval
@@ -2584,7 +2595,7 @@ class Dataset(object):
 
             new_pred = np.zeros(tuple([n_classes] + out_size[0:2]))
             for pos, p in enumerate(pred):
-                new_pred[pos] = misc.imresize(p, tuple(out_size[0:2]))
+                new_pred[pos] = transform.resize(p, tuple(out_size[0:2]))
 
             new_pred = np.reshape(new_pred, (-1, out_size[0] * out_size[1]))
             new_pred = np.transpose(new_pred, [1, 0])
@@ -2784,8 +2795,8 @@ class Dataset(object):
                 logging.info("Loading train mean image from file.")
             mean_image = misc.imread(mean_image)
         elif isinstance(mean_image, list):
-            mean_image = np.array(mean_image)
-        self.train_mean[id] = mean_image.astype(np.float32)
+            mean_image = np.array(mean_image, np.float64)
+        self.train_mean[id] = mean_image.astype(np.float64)
 
         if normalization:
             self.train_mean[id] /= 255.0
@@ -2794,7 +2805,7 @@ class Dataset(object):
             if len(self.train_mean[id].shape) == 1 and self.train_mean[id].shape[0] == self.img_size_crop[id][2]:
                 if not self.silence:
                     logging.info("Converting input train mean pixels into mean image.")
-                mean_image = np.zeros(tuple(self.img_size_crop[id]))
+                mean_image = np.zeros(tuple(self.img_size_crop[id]), np.float64)
                 for c in range(self.img_size_crop[id][2]):
                     mean_image[:, :, c] = self.train_mean[id][c]
                 self.train_mean[id] = mean_image
@@ -2862,8 +2873,8 @@ class Dataset(object):
         # Return the mean
         return self.train_mean[id]
 
-    def loadImages(self, images, id, normalization_type='0-1',
-                   normalization=False, meanSubstraction=True,
+    def loadImages(self, images, id, normalization_type='(-1)-1',
+                   normalization=True, meanSubstraction=False,
                    dataAugmentation=True, daRandomParams=None,
                    external=False, loaded=False):
         """
@@ -2872,7 +2883,7 @@ class Dataset(object):
         :param images : list of image string names or list of matrices representing images (only if loaded==True)
         :param id : identifier in the Dataset object of the data we are loading
         :param normalization_type: type of normalization applied
-        :param normalization : whether we applying a 0-1 normalization to the images
+        :param normalization : whether we applying a '0-1' or '(-1)-1' normalization to the images
         :param meanSubstraction : whether we are removing the training mean
         :param dataAugmentation : whether we are applying dataAugmentatino (random cropping and horizontal flip)
         :param daRandomParams : dictionary with results of random data augmentation provided by
@@ -2893,8 +2904,8 @@ class Dataset(object):
             if id not in self.train_mean:
                 raise Exception('Training mean is not loaded or calculated yet for the input with id "' + id + '".')
             train_mean = copy.copy(self.train_mean[id])
-            train_mean = misc.imresize(train_mean, self.img_size_crop[id][0:2])
-
+            train_mean = transform.resize(train_mean, self.img_size_crop[id][0:2])
+            
             # Transpose dimensions
             if len(self.img_size[id]) == 3:  # if it is a 3D image
                 # Convert RGB to BGR
@@ -2906,10 +2917,13 @@ class Dataset(object):
             if normalization:
                 if normalization_type == '0-1':
                     train_mean /= 255.0
+                elif normalization_type == '(-1)-1':
+                    train_mean /= 127.5
+                    train_mean -= 1.
 
         nImages = len(images)
 
-        type_imgs = np.float32
+        type_imgs = np.float64
         if len(self.img_size[id]) == 3:
             I = np.zeros([nImages] + [self.img_size_crop[id][2]] + self.img_size_crop[id][0:2], dtype=type_imgs)
         else:
@@ -2957,16 +2971,14 @@ class Dataset(object):
             # Data augmentation
             if not dataAugmentation:
                 # Use whole image
-                # im = np.asarray(im, dtype=type_imgs)
-                # im = misc.imresize(im, (self.img_size_crop[id][1], self.img_size_crop[id][0]))
-                im = im.resize((self.img_size_crop[id][1], self.img_size_crop[id][0]))
+                im = np.asarray(im, dtype=type_imgs)
+                im = transform.resize(im, (self.img_size_crop[id][1], self.img_size_crop[id][0]))
                 im = np.asarray(im, dtype=type_imgs)
             else:
                 randomParams = daRandomParams[images[i]]
                 # Resize
-                # im = np.asarray(im, dtype=type_imgs)
-                # im = misc.imresize(im, (self.img_size[id][1], self.img_size[id][0]))
-                im = im.resize((self.img_size[id][1], self.img_size[id][0]))
+                im = np.asarray(im, dtype=type_imgs)
+                im = transform.resize(im, (self.img_size[id][1], self.img_size[id][0]))
                 im = np.asarray(im, dtype=type_imgs)
 
                 # Take random crop
@@ -2999,6 +3011,9 @@ class Dataset(object):
             if normalization:
                 if normalization_type == '0-1':
                     im /= 255.0
+                elif normalization_type == '(-1)-1':
+                    im /= 127.5
+                    im -= 1.
 
             # Permute dimensions
             if len(self.img_size[id]) == 3:
@@ -3060,8 +3075,9 @@ class Dataset(object):
     #           [X,Y] pairs or X only
     # ------------------------------------------------------- #
 
-    def getX(self, set_name, init, final, normalization_type='0-1', normalization=False,
-             meanSubstraction=True, dataAugmentation=True, debug=False):
+    def getX(self, set_name, init, final, normalization_type='(-1)-1',
+             normalization=True, meanSubstraction=False, 
+             dataAugmentation=True, debug=False):
         """
         Gets all the data samples stored between the positions init to final
             
@@ -3132,7 +3148,8 @@ class Dataset(object):
 
         return X
 
-    def getXY(self, set_name, k, normalization_type='0-1', normalization=False, meanSubstraction=True,
+    def getXY(self, set_name, k, normalization_type='(-1)-1',
+              normalization=True, meanSubstraction=False,
               dataAugmentation=True, debug=False):
         """
         Gets the [X,Y] pairs for the next 'k' samples in the desired set.
@@ -3271,7 +3288,8 @@ class Dataset(object):
 
         return [X, Y]
 
-    def getXY_FromIndices(self, set_name, k, normalization_type='0-1', normalization=False, meanSubstraction=True,
+    def getXY_FromIndices(self, set_name, k, normalization_type='(-1)-1',
+                          normalization=True, meanSubstraction=False,
                           dataAugmentation=True, debug=False):
         """
         Gets the [X,Y] pairs for the samples in positions 'k' in the desired set.
@@ -3392,7 +3410,8 @@ class Dataset(object):
 
         return [X, Y]
 
-    def getX_FromIndices(self, set_name, k, normalization_type='0-1', normalization=False, meanSubstraction=True,
+    def getX_FromIndices(self, set_name, k, normalization_type='(-1)-1',
+                         normalization=True, meanSubstraction=False,
                          dataAugmentation=True, debug=False):
         """
         Gets the [X,Y] pairs for the samples in positions 'k' in the desired set.
