@@ -50,6 +50,8 @@ def common_prefix(s1, s2):
     :param s2: String 2
     :return: Common prefix
     """
+
+    i = -1
     for i in range(min(len(s1), len(s2))):
         if s1[i] != s2[i]:
             return i, s1[:i]
