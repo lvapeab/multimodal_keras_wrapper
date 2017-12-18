@@ -2457,8 +2457,29 @@ class Dataset(object):
     #       TYPE '3DSemanticLabel' SPECIFIC FUNCTIONS
     # ------------------------------------------------------- #
 
-    def getImageFromPrediction_3DSemanticLabel(self):
-        raise NotImplementedError('ToDo: implement from read_write.py')
+    def getImageFromPrediction_3DSemanticLabel(self, img, n_classes):
+        """
+        Get the segmented image from the prediction of the model using the semantic classes of the dataset together with their corresponding colours.
+
+        :param img: Prediction of the model.
+        :param n_classes: Number of semantic classes.
+        :return: out_img: The segmented image with the class colours.
+        """
+
+        h_crop, w_crop, d_crop = self.img_size_crop[self.id_in_3DLabel[self.ids_outputs[0]]]
+        output_id = ''.join(self.ids_outputs)
+
+        #prepare the segmented image
+        pred_labels = np.reshape(img, (h_crop, w_crop, n_classes))
+        out_img = np.zeros((h_crop, w_crop, d_crop))
+
+        for ih in range(h_crop):
+            for iw in range(w_crop):
+                lab = np.argmax(pred_labels[ih, iw])
+                out_img[ih, iw, :] = self.semantic_classes[output_id][lab]
+
+        return out_img
+
 
     def preprocess3DSemanticLabel(self, path_list, id, associated_id_in, num_poolings):
         return self.preprocess3DLabel(path_list, id, associated_id_in, num_poolings)
@@ -2893,9 +2914,11 @@ class Dataset(object):
         :param loaded : set this option to True if images is a list of matricies instead of a list of strings
         """
         # Check if the chosen normalization type exists
+        if normalization_type is None:
+            normalization_type = '(-1)-1'
         if normalization and normalization_type not in self.__available_norm_im_vid:
             raise NotImplementedError(
-                'The chosen normalization type ' + normalization_type +
+                'The chosen normalization type ' + str(normalization_type) +
                 ' is not implemented for the type "raw-image" and "video".')
 
         # Prepare the training mean image
@@ -2972,13 +2995,13 @@ class Dataset(object):
             if not dataAugmentation:
                 # Use whole image
                 im = np.asarray(im, dtype=type_imgs)
-                im = transform.resize(im, (self.img_size_crop[id][1], self.img_size_crop[id][0]))
+                im = transform.resize(im, (self.img_size_crop[id][0], self.img_size_crop[id][1]))
                 im = np.asarray(im, dtype=type_imgs)
             else:
                 randomParams = daRandomParams[images[i]]
                 # Resize
                 im = np.asarray(im, dtype=type_imgs)
-                im = transform.resize(im, (self.img_size[id][1], self.img_size[id][0]))
+                im = transform.resize(im, (self.img_size[id][0], self.img_size[id][1]))
                 im = np.asarray(im, dtype=type_imgs)
 
                 # Take random crop
@@ -3040,6 +3063,7 @@ class Dataset(object):
             # Random crop
             margin = [self.img_size[id][0] - self.img_size_crop[id][0],
                       self.img_size[id][1] - self.img_size_crop[id][1]]
+
             if margin[0] > 0:
                 left = random.sample([k_ for k_ in range(margin[0])], 1)
             else:
