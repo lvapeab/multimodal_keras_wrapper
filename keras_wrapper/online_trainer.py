@@ -549,6 +549,7 @@ class OnlineTrainer:
                     del params['n_best_optimizer']
                     del params['optimizer']
                     del params['additional_training_settings']
+                    del params['loss']
                     model.trainNetFromSamples([x, state_below_y], y, params)
                     self.n_updates += 1
 
