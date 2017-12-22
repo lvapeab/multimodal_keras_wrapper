@@ -1,9 +1,5 @@
 # -*- coding: utf-8 -*-
 import re
-import sys
-import subprocess
-from os import path
-import time
 
 
 def tokenize_basic(caption, lowercase=True):
@@ -287,21 +283,6 @@ def tokenize_questions(caption):
     resAns = processDigitArticle(resAns)
 
     return resAns
-
-
-def tokenize_bpe(self, caption):
-    """
-    Applies BPE segmentation (https://github.com/rsennrich/subword-nmt)
-    :param caption: Caption to detokenize.
-    :return: Encoded version of caption.
-    """
-    if not self.BPE_built:
-        raise Exception('Prior to use the "tokenize_bpe" method, you should invoke "build_BPE"')
-    if type(caption) == str:
-        caption = caption.decode('utf-8')
-    tokenized = re.sub(u'[\n\t]+', u'', caption)
-    tokenized = self.BPE.segment(tokenized).strip()
-    return tokenized
 
 
 def detokenize_none(caption):
