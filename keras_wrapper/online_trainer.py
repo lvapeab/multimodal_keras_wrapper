@@ -6,7 +6,7 @@ import numpy as np
 
 from keras_wrapper.cnn_model import Model_Wrapper
 from keras_wrapper.extra.read_write import list2file
-from keras_wrapper.utils import indices_2_one_hot, decode_predictions_beam_search
+from keras_wrapper.utils import indices_2_one_hot, decode_predictions_beam_search, one_hot_2_indices
 
 
 class OnlineTrainer:
@@ -103,6 +103,7 @@ class OnlineTrainer:
 
             if self.verbose > 1:
                 logging.info('Hypothesis: %s' % str(hypothesis_to_write))
+        maxlen_hypothesis_reference = max(len(trans_indices), len(y[0]))
 
         # If we are working with an n-best list, we'll probably have to decode it
         if self.params_prediction['n_best_optimizer']:
@@ -115,7 +116,6 @@ class OnlineTrainer:
             # Decode N-best list
             for n_best_preds, n_best_scores, n_best_alphas in n_best:
                 n_best_predictions = []
-
                 for i, (n_best_pred, n_best_score, n_best_alpha) in enumerate(zip(n_best_preds,
                                                                                   n_best_scores,
                                                                                   n_best_alphas)):
@@ -185,7 +185,7 @@ class OnlineTrainer:
                                     n_best_predictions[permutation_index_low][3]
 
                             # Log diff loss: p(h_i|x) - p(h_j|x) -> We need to compute 2 logprobs
-                            if 'log_diff' in self.params_training.get('loss').keys()[0]:
+                            if 'log_diff' in self.params_training.get('loss').keys()[0] or 'kl_diff' in self.params_training.get('loss').keys()[0] :
                                 # Tensors for computing p(h_i|x)
                                 top_metric_h = np.zeros(maxlen_nbest_hypothesis, dtype='int64')
                                 unnormalized_top_metric_h = np.asarray(n_best_predictions[permutation_index_low][1])
@@ -303,10 +303,24 @@ class OnlineTrainer:
                     loss = 1
                     # With custom losses, we'll probably use the hypothesis as training sample -> Convert to one-hot
                     # Tensors for computing p(h_i|x)
+
+                    if 'kl_diff' in self.params_training.get('loss'):
+                        if len(trans_indices) < maxlen_hypothesis_reference:
+                            extended_hyp = np.zeros(maxlen_hypothesis_reference, dtype='int64')
+                            extended_hyp[:len(trans_indices)] = trans_indices
+                            trans_indices = extended_hyp
+                        elif len(y[0]) < maxlen_hypothesis_reference:
+                            y_indices = one_hot_2_indices(y)[0]
+                            extended_y = np.zeros(maxlen_hypothesis_reference, dtype='int64')
+                            extended_y[:len(y_indices)] = y_indices
+                            y = np.array([indices_2_one_hot(extended_y, self.dataset.vocabulary_len["target_text"])])
+                            state_below_y = np.asarray([np.append(self.dataset.extra_words['<null>'], extended_y[:-1])])
+
                     hyp = np.array([indices_2_one_hot(trans_indices, self.dataset.vocabulary_len["target_text"])])
                     state_below_h = np.asarray([np.append(self.dataset.extra_words['<null>'], trans_indices[:-1])])
+
                     # Build model inputs according to those required for each loss function
-                    if 'log_diff' in self.params_training.get('loss'):
+                    if 'log_diff' in self.params_training.get('loss') or 'kl_diff' in self.params_training.get('loss') :
                         train_inputs = [x, state_below_y, state_below_h] + [y, hyp]
                     elif 'log_diff_plus_categorical_crossentropy' in self.params_training.get('loss').keys()[0]:
                         train_inputs = [x, state_below_y, state_below_y, state_below_h,
