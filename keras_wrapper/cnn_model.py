@@ -171,11 +171,9 @@ def loadModel(model_path, update_num, reload_epoch=True, custom_objects=None, fu
     # Load Model_Wrapper information
     try:
         model_wrapper = pk.load(open(model_name + '_Model_Wrapper.pkl', 'rb'))
-    except:  # backwards compatibility
-        # try:
+    except Exception as e:  # backwards compatibility
+        logging.info(str(e))
         model_wrapper = pk.load(open(model_name + '_CNN_Model.pkl', 'rb'))
-        # except:
-        #    raise Exception(ValueError)
 
     # Add logger for backwards compatibility (old pre-trained models) if it does not exist
     model_wrapper.updateLogger()
@@ -1045,7 +1043,7 @@ class Model_Wrapper(object):
 
     def __train_from_samples(self, x, y, params, class_weight=None, sample_weight=None):
 
-        if params['verbose'] > 0:
+        if params['verbose'] > 1:
             logging.info("Training parameters: " + str(params))
         callbacks = []
 
