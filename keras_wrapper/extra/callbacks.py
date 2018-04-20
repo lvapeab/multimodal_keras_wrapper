@@ -1,13 +1,13 @@
+# -*- coding: utf-8 -*-
 from __future__ import print_function
-
+from six import iteritems
 import warnings
-
-import evaluation
 from keras import backend as K
 from keras.callbacks import Callback as KerasCallback
 from keras_wrapper.utils import decode_predictions_one_hot, decode_predictions_beam_search, decode_predictions, \
     decode_multilabel
-from read_write import *
+from keras_wrapper.extra import evaluation
+from keras_wrapper.extra.read_write import *
 import copy
 
 
@@ -37,11 +37,12 @@ def checkDefaultParamsBeamSearch(params):
                       'output_max_length_depending_on_x': False,
                       'output_max_length_depending_on_x_factor': 3,
                       'output_min_length_depending_on_x': False,
-                      'output_min_length_depending_on_x_factor': 2
+                      'output_min_length_depending_on_x_factor': 2,
+                      'attend_on_output': False
                       }
 
-    for k, v in params.iteritems():
-        if k in default_params.keys() or k in required_params:
+    for k, v in iteritems(params):
+        if k in list(default_params) or k in required_params:
             default_params[k] = v
 
     for k in required_params:
@@ -93,7 +94,7 @@ class EvalPerformance(KerasCallback):
                  start_eval_on_epoch=0,
                  is_3DLabel=False,
                  sampling_type='max_likelihood',
-                 save_each_evaluation=True,
+                 save_each_evaluation=False,
                  out_pred_idx=None,
                  max_plot=1.0,
                  do_plot=True,
@@ -232,7 +233,7 @@ class EvalPerformance(KerasCallback):
 
             self.min_pred_multilabel = [min_pred_multilabel]
 
-            if 0 not in self.extra_vars.keys():
+            if 0 not in list(self.extra_vars):
                 self.extra_vars[0] = self.extra_vars
 
             if self.output_types is None:
@@ -330,7 +331,8 @@ class EvalPerformance(KerasCallback):
 
             # Single-output model
             if not self.gt_pos or self.gt_pos == 0 or len(self.gt_pos) == 1:
-                predictions_all = [predictions_all]
+                if len(predictions_all)!=2:
+                    predictions_all = [predictions_all]
                 gt_positions = [0]
 
             # Multi-output model
@@ -346,13 +348,11 @@ class EvalPerformance(KerasCallback):
                                                                                                   self.index2word_y,
                                                                                                   self.index2word_x):
 
-                print(len(predictions_all))
-
                 predictions = predictions_all[gt_pos]
 
                 if self.verbose > 0:
                     print('')
-                    logging.info('Prediction output ' + str(gt_pos) + ': ' + gt_id + ' (' + type + ')')
+                    logging.info('Prediction output ' + str(gt_pos) + ': ' + str(gt_id) + ' (' + str(type) + ')')
 
                 # Postprocess outputs of type text
                 if type == 'text':
@@ -529,8 +529,8 @@ class EvalPerformance(KerasCallback):
         self.recoverInOutMappings()
 
     def changeInOutMappings(self):
-        self.train_mappings = { 'in': self.model_to_eval.inputsMapping,
-                                'out': self.model_to_eval.outputsMapping,
+        self.train_mappings = {'in': self.model_to_eval.inputsMapping,
+                               'out': self.model_to_eval.outputsMapping,
                               }
 
         if self.inputs_mapping_eval is not None:
@@ -723,13 +723,13 @@ class Sample(KerasCallback):
                 # Write samples
                 if self.print_sources:
                     # Write samples
-                    for i, (source, sample, truth) in enumerate(zip(sources, predictions, truths)):
+                    for i, (source, sample, truth) in list(enumerate(zip(sources, predictions, truths))):
                         print("Source     (%d): %s" % (i, str(source.encode('utf-8'))))
                         print("Hypothesis (%d): %s" % (i, str(sample.encode('utf-8'))))
                         print("Reference  (%d): %s" % (i, str(truth.encode('utf-8'))))
                         print("")
                 else:
-                    for i, (sample, truth) in enumerate(zip(predictions, truths)):
+                    for i, (sample, truth) in list(enumerate(zip(predictions, truths))):
                         print("Hypothesis (%d): %s" % (i, str(sample.encode('utf-8'))))
                         print("Reference  (%d): %s" % (i, str(truth.encode('utf-8'))))
                         print("")
@@ -913,9 +913,12 @@ class LearningRateReducer(KerasCallback):
         new_rate = self.reduce_rate if self.reduction_function == 'linear' else \
             np.power(self.exp_base, current_nb / self.half_life) * self.reduce_rate
         if K.backend() == 'tensorflow':
-            lr = K.get_value(self.model.optimizer.lr)
+            print('WARNING: learning rate decay is deactivated when using TensorFlow') 
+            """
+            lr = self.model.optimizer.optimizer.get_lr()
             self.new_lr = np.float32(lr * new_rate)
-            K.set_value(self.model.optimizer.lr, self.new_lr)
+            self.model.optimizer.optimizer.set_lr(self.new_lr)
+            """
         else:
             lr = self.model.optimizer.lr.get_value()
             self.new_lr = np.float32(lr * new_rate)
