@@ -269,7 +269,7 @@ def tokenize_questions(caption):
                 outText.append(word)
             else:
                 pass
-        for wordId, word in enumerate(outText):
+        for wordId, word in list(enumerate(outText)):
             if word in contractions:
                 outText[wordId] = contractions[word]
         outText = ' '.join(outText)

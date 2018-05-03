@@ -1,12 +1,58 @@
-# encoding: utf-8
-from keras.layers.convolutional import ZeroPadding2D
-
-import numpy as np
-
+# -*- coding: utf-8 -*-
 import copy
 import itertools
-import time
 import logging
+import time
+import numpy as np
+import sys
+if sys.version_info.major == 2:
+    from itertools import imap as map
+    from itertools import izip as zip
+    from itertools import ifilter as filter
+
+
+class MultiprocessQueue():
+    """
+        Wrapper class for encapsulating the behaviour of some multiprocessing
+        communication structures.
+
+        See how Queues and Pipes work in the following link
+        https://docs.python.org/2/library/multiprocessing.html#multiprocessing-examples
+    """
+
+    def __init__(self, manager, type='Queue'):
+        if type != 'Queue' and type != 'Pipe':
+            raise NotImplementedError('Not valid multiprocessing queue of type ' + type)
+
+        self.type = type
+        if type == 'Queue':
+            self.queue = eval('manager.' + type + '()')
+        else:
+            self.queue = eval(type + '()')
+
+    def put(self, elem):
+        if self.type == 'Queue':
+            self.queue.put(elem)
+        elif self.type == 'Pipe':
+            self.queue[1].send(elem)
+
+    def get(self):
+        if self.type == 'Queue':
+            return self.queue.get()
+        elif self.type == 'Pipe':
+            return self.queue[0].recv()
+
+    def qsize(self):
+        if self.type == 'Queue':
+            return self.queue.qsize()
+        elif self.type == 'Pipe':
+            return -1
+
+    def empty(self):
+        if self.type == 'Queue':
+            return self.queue.empty()
+        elif self.type == 'Pipe':
+            return not self.queue[0].poll()
 
 
 def bbox(img, mode='max'):
@@ -245,6 +291,8 @@ def build_Specific_OneVsOneECOC_loss_Stage(net, input, input_shape, classes, eco
     :param activations:
     :return:
     """
+    from keras.layers.convolutional import ZeroPadding2D
+
     n_classes = len(classes)
     if pairs is None:  # generate any possible combination of two classes
         pairs = tuple(itertools.combinations(range(n_classes), 2))
@@ -255,7 +303,7 @@ def build_Specific_OneVsOneECOC_loss_Stage(net, input, input_shape, classes, eco
 
     logging.info("Building " + str(n_pairs) + " OneVsOne structures...")
 
-    for i, c in enumerate(pairs):
+    for i, c in list(enumerate(pairs)):
         # t = time.time()
 
         # Insert 1s in the corresponding positions of the ecoc table
@@ -560,8 +608,8 @@ def simplifyDataset(ds, id_classes, n_classes=50):
     for s in ['train', 'val', 'test']:
         kept_Y = dict()
         kept_X = dict()
-        exec ('labels_set = ds.Y_' + s + '[id_labels]')
-        for i, y in enumerate(labels_set):
+        labels_set = getattr(ds, 'Y_' + s)[id_labels]
+        for i, y in list(enumerate(labels_set)):
             if y < n_classes:
                 for id_out in ds.ids_outputs:
                     exec ('sample = ds.Y_' + s + '[id_out][i]')
@@ -582,6 +630,72 @@ def simplifyDataset(ds, id_classes, n_classes=50):
         exec ('ds.len_' + s + ' = len(kept_Y[id_labels])')
 
 
+def average_models(models, output_model, weights=None):
+    from keras_wrapper.cnn_model import loadModel, saveModel
+    assert type(models) == list, 'You must give a list of models to average.'
+    assert len(models) > 0, 'You provided an empty list of models to average!'
+
+    model_weights = np.asarray([1. / len(models)] * len(models), dtype=np.float32) if (weights is None) or (weights == []) else np.asarray(weights, dtype=np.float32)
+    assert len(model_weights) == len(models), 'You must give a list of weights of the same size than the list of models.'
+    loaded_models = [loadModel(m, -1, full_path=True) for m in models]
+
+    # Check that all models are compatible
+    assert all([hasattr(loaded_model, 'model') for loaded_model in loaded_models]), \
+        'Not all models have the attribute "model".'
+
+    assert all([hasattr(loaded_model, 'model_init') for loaded_model in loaded_models]) or all([not hasattr(loaded_model, 'model_init') for loaded_model in loaded_models]), \
+        'Not all models have the attribute "model_init".'
+
+    assert all([hasattr(loaded_model, 'model_next') for loaded_model in loaded_models]) or all([not hasattr(loaded_model, 'model_next') for loaded_model in loaded_models]), \
+        'Not all models have the attribute "model_next".'
+
+    # Check all layers are the same
+    assert all([[str(loaded_models[0].model.weights[i]) == str(loaded_model.model.weights[i]) for i in range(len(loaded_models[0].model.weights))] for loaded_model in
+                loaded_models]), 'Not all models have the same weights!'
+    if hasattr(loaded_models[0], 'model_init'):
+        assert all([[str(loaded_models[0].model_init.weights[i]) == str(loaded_model.model_init.weights[i]) for i in range(len(loaded_models[0].model.weights))] for loaded_model in
+                    loaded_models]), 'Not all models have the same weights!'
+    assert all([[str(loaded_models[0].model.weights[i]) == str(loaded_model.model.weights[i]) for i in range(len(loaded_models[0].model_init.weights))] for loaded_model in
+                loaded_models]), 'Not all model_inits have the same weights!'
+    if hasattr(loaded_models[0], 'model_next'):
+        assert all([[str(loaded_models[0].model_next.weights[i]) == str(loaded_model.model_next.weights[i]) for i in range(len(loaded_models[0].model_next.weights))] for loaded_model in
+                    loaded_models]), 'Not all model_nexts have the same weights!'
+
+    # Retrieve weights, weigh them and overwrite in model[0].
+    current_weights = loaded_models[0].model.get_weights()
+    loaded_models[0].model.set_weights([current_weights[matrix_index] * model_weights[0] for matrix_index in range(len(current_weights))])
+    # We have model_init
+    if hasattr(loaded_models[0], 'model_init'):
+        current_weights = loaded_models[0].model_init.get_weights()
+        loaded_models[0].model_init.set_weights([current_weights[matrix_index] * model_weights[0] for matrix_index in range(len(current_weights))])
+
+    # We have model_next
+    if hasattr(loaded_models[0], 'model_next'):
+        current_weights = loaded_models[0].model_next.get_weights()
+        loaded_models[0].model_next.set_weights([current_weights[matrix_index] * model_weights[0] for matrix_index in range(len(current_weights))])
+
+    # Weighted sum of all models
+    for m in range(1, len(models)):
+        current_weights = loaded_models[m].model.get_weights()
+        prev_weights = loaded_models[0].model.get_weights()
+        loaded_models[0].model.set_weights([current_weights[matrix_index] * model_weights[m] + prev_weights[matrix_index] for matrix_index in range(len(current_weights))])
+
+        # We have model_init
+        if hasattr(loaded_models[0], 'model_init'):
+            current_weights = loaded_models[m].model_init.get_weights()
+            prev_weights = loaded_models[0].model_init.get_weights()
+            loaded_models[0].model_init.set_weights([current_weights[matrix_index] * model_weights[m] + prev_weights[matrix_index] for matrix_index in range(len(current_weights))])
+
+        # We have model_next
+        if hasattr(loaded_models[0], 'model_next'):
+            current_weights = loaded_models[m].model_next.get_weights()
+            prev_weights = loaded_models[0].model_next.get_weights()
+            loaded_models[0].model_next.set_weights([current_weights[matrix_index] * model_weights[m] + prev_weights[matrix_index] for matrix_index in range(len(current_weights))])
+
+    # Save averaged model
+    saveModel(loaded_models[0], -1, path=output_model, full_path=True, store_iter=False)
+
+
 # Text-related utils
 def one_hot_2_indices(preds, pad_sequences=True, verbose=0):
     """
@@ -593,7 +707,7 @@ def one_hot_2_indices(preds, pad_sequences=True, verbose=0):
     """
     if verbose > 0:
         logging.info('Converting one hot prediction into indices...')
-    preds = map(lambda x: np.nonzero(x)[1], preds)
+    preds = list(map(lambda x: np.argmax(x, axis=1), preds))
     if pad_sequences:
         preds = [pred[:sum([int(elem > 0) for elem in pred]) + 1] for pred in preds]
     return preds
@@ -616,6 +730,35 @@ def indices_2_one_hot(indices, n):
     return one_hot
 
 
+# From keras.utils.np_utils
+def to_categorical(y, num_classes=None):
+    """Converts a class vector (integers) to binary class matrix.
+
+    E.g. for use with categorical_crossentropy.
+
+    # Arguments
+        y: class vector to be converted into a matrix
+            (integers from 0 to num_classes).
+        num_classes: total number of classes.
+
+    # Returns
+        A binary matrix representation of the input.
+    """
+    y = np.array(y, dtype='int')
+    input_shape = y.shape
+    if input_shape and input_shape[-1] == 1 and len(input_shape) > 1:
+        input_shape = tuple(input_shape[:-1])
+    y = y.ravel()
+    if not num_classes:
+        num_classes = np.max(y) + 1
+    n = y.shape[0]
+    categorical = np.zeros((n, num_classes))
+    categorical[np.arange(n), y] = 1
+    output_shape = input_shape + (num_classes,)
+    categorical = np.reshape(categorical, output_shape)
+    return categorical
+
+
 # ------------------------------------------------------- #
 #       DECODING FUNCTIONS
 #           Functions for decoding predictions
@@ -631,16 +774,17 @@ def decode_predictions_one_hot(preds, index2word, verbose=0):
     """
     if verbose > 0:
         logging.info('Decoding one hot prediction ...')
-    preds = map(lambda prediction: np.nonzero(prediction)[1], preds)
+    preds = list(map(lambda prediction: np.argmax(prediction, axis=1), preds))
     PAD = '<pad>'
-    flattened_answer_pred = [map(lambda index: index2word[index], pred) for pred in preds]
+    flattened_answer_pred = [list(map(lambda index: index2word[index], pred)) for pred in preds]
     answer_pred_matrix = np.asarray(flattened_answer_pred)
     answer_pred = []
 
     for a_no in answer_pred_matrix:
-        end_token_pos = [j for j, x in enumerate(a_no) if x == PAD]
+        end_token_pos = [j for j, x in list(enumerate(a_no)) if x == PAD]
         end_token_pos = None if len(end_token_pos) == 0 else end_token_pos[0]
-        tmp = ' '.join(a_no[:end_token_pos]).decode('utf-8')
+        a_no = [a.decode('utf-8') if type(a) == str and sys.version_info.major == 2 else a for a in a_no]
+        tmp = u' '.join(a_no[:end_token_pos])
         answer_pred.append(tmp)
     return answer_pred
 
@@ -659,9 +803,9 @@ def decode_predictions(preds, temperature, index2word, sampling_type, verbose=0)
     if verbose > 0:
         logging.info('Decoding prediction ...')
     flattened_preds = preds.reshape(-1, preds.shape[-1])
-    flattened_answer_pred = map(lambda index: index2word[index], sampling(scores=flattened_preds,
+    flattened_answer_pred = list(map(lambda index: index2word[index], sampling(scores=flattened_preds,
                                                                           sampling_type=sampling_type,
-                                                                          temperature=temperature))
+                                                                          temperature=temperature)))
     answer_pred_matrix = np.asarray(flattened_answer_pred).reshape(preds.shape[:-1])
 
     answer_pred = []
@@ -671,9 +815,10 @@ def decode_predictions(preds, temperature, index2word, sampling_type, verbose=0)
     for a_no in answer_pred_matrix:
         if len(a_no.shape) > 1:  # only process word by word if our prediction has more than one output
             init_token_pos = 0
-            end_token_pos = [j for j, x in enumerate(a_no) if x == EOS or x == PAD]
+            end_token_pos = [j for j, x in list(enumerate(a_no)) if x == EOS or x == PAD]
             end_token_pos = None if len(end_token_pos) == 0 else end_token_pos[0]
-            tmp = ' '.join(a_no[init_token_pos:end_token_pos])
+            a_no = [a.decode('utf-8') if type(a)==str and sys.version_info.major == 2 else a for a in a_no]
+            tmp = u' '.join(a_no[init_token_pos:end_token_pos])
         else:
             tmp = a_no
         answer_pred.append(tmp)
@@ -699,7 +844,7 @@ def decode_multilabel(preds, index2word, min_val=0.5, get_probs=False, verbose=0
     for pred in preds:
         current_pred = []
         current_probs = []
-        for ind, word in enumerate(pred):
+        for ind, word in list(enumerate(pred)):
             if word >= min_val:
                 current_pred.append(index2word[ind])
                 current_probs.append(word)
@@ -728,10 +873,7 @@ def replace_unknown_words(src_word_seq, trg_word_seq, hard_alignment, unk_symbol
     """
     trans_words = trg_word_seq
     new_trans_words = []
-    if verbose > 2:
-        print "Input sentence:", src_word_seq
-        print "Hard alignments", hard_alignment
-    for j in xrange(len(trans_words)):
+    for j in range(len(trans_words)):
         if trans_words[j] == unk_symbol:
             UNK_src = src_word_seq[hard_alignment[j]]
             if type(UNK_src) == str:
@@ -785,20 +927,14 @@ def decode_predictions_beam_search(preds, index2word, alphas=None, heuristic=0,
             logging.info('Using heuristic %d' % heuristic)
     if pad_sequences:
         preds = [pred[:sum([int(elem > 0) for elem in pred]) + 1] for pred in preds]
-    flattened_answer_pred = [map(lambda x: index2word[x].decode('utf-8'), pred) for pred in preds]
+    flattened_answer_pred = [list(map(lambda x: index2word[x], pred)) for pred in preds]
     answer_pred = []
 
     if alphas is not None:
-        x_text = map(lambda x: x.split(), x_text)
-        hard_alignments = map(lambda alignment, x_sentence: np.argmax(alignment[:, :max(1, len(x_sentence))], axis=1), alphas, x_text)
-        for i, a_no in enumerate(flattened_answer_pred):
+        x_text = list(map(lambda x: x.split(), x_text))
+        hard_alignments = list(map(lambda alignment, x_sentence: np.argmax(alignment[:, :max(1, len(x_sentence))], axis=1), alphas, x_text))
+        for i, a_no in list(enumerate(flattened_answer_pred)):
             if unk_symbol in a_no:
-                if verbose > 1:
-                    print unk_symbol, "at sentence number", i
-                    print "hypothesis:", a_no
-                    if verbose > 2:
-                        print "alphas:", alphas[i]
-
                 a_no = replace_unknown_words(x_text[i],
                                              a_no,
                                              hard_alignments[i],
@@ -806,12 +942,12 @@ def decode_predictions_beam_search(preds, index2word, alphas=None, heuristic=0,
                                              heuristic=heuristic,
                                              mapping=mapping,
                                              verbose=verbose)
-                if verbose > 1:
-                    print "After unk_replace:", a_no
+            a_no = [a.decode('utf-8') if type(a)==str and sys.version_info.major == 2 else a for a in a_no]
             tmp = u' '.join(a_no[:-1])
             answer_pred.append(tmp)
     else:
         for a_no in flattened_answer_pred:
+            a_no = [a.decode('utf-8') if type(a)==str and sys.version_info.major == 2 else a for a in a_no]
             tmp = u' '.join(a_no[:-1])
             answer_pred.append(tmp)
     return answer_pred

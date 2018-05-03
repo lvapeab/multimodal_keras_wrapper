@@ -1,12 +1,13 @@
+# -*- coding: utf-8 -*-
 from __future__ import print_function
-
+from six import iteritems
 import warnings
-
-import evaluation
+from keras import backend as K
 from keras.callbacks import Callback as KerasCallback
 from keras_wrapper.utils import decode_predictions_one_hot, decode_predictions_beam_search, decode_predictions, \
     decode_multilabel
-from read_write import *
+from keras_wrapper.extra import evaluation
+from keras_wrapper.extra.read_write import *
 import copy
 
 
@@ -15,7 +16,8 @@ def checkDefaultParamsBeamSearch(params):
     default_params = {'max_batch_size': 50,
                       'beam_size': 5,
                       'maxlen': 30,
-                      'normalize': False,
+                      'normalize': True,
+                      'normalization_type': '(-1)-1',
                       'words_so_far': False,
                       'n_parallel_loaders': 5,
                       'optimized_search': False,
@@ -35,11 +37,12 @@ def checkDefaultParamsBeamSearch(params):
                       'output_max_length_depending_on_x': False,
                       'output_max_length_depending_on_x_factor': 3,
                       'output_min_length_depending_on_x': False,
-                      'output_min_length_depending_on_x_factor': 2
+                      'output_min_length_depending_on_x_factor': 2,
+                      'attend_on_output': False
                       }
 
-    for k, v in params.iteritems():
-        if k in default_params.keys() or k in required_params:
+    for k, v in iteritems(params):
+        if k in list(default_params) or k in required_params:
             default_params[k] = v
 
     for k in required_params:
@@ -61,11 +64,15 @@ class EvalPerformance(KerasCallback):
                  metric_name,
                  set_name,
                  batch_size,
+                 model_name='model',
+                 inputs_mapping_eval=None,
+                 outputs_mapping_eval = None,
                  gt_pos=None,
                  each_n_epochs=1,
                  max_eval_samples=None,
                  extra_vars=None,
-                 normalize=False,
+                 normalize=True,
+                 normalization_type='(-1)-1',
                  output_types=None,
                  is_text=False,
                  is_multilabel=False,
@@ -87,7 +94,7 @@ class EvalPerformance(KerasCallback):
                  start_eval_on_epoch=0,
                  is_3DLabel=False,
                  sampling_type='max_likelihood',
-                 save_each_evaluation=True,
+                 save_each_evaluation=False,
                  out_pred_idx=None,
                  max_plot=1.0,
                  do_plot=True,
@@ -95,11 +102,15 @@ class EvalPerformance(KerasCallback):
         """
         Evaluates a model each N epochs or updates
 
-        :param model: model to evaluate
+        :param model: Model_Wrapper object model to evaluate
         :param dataset: instance of the class Dataset in keras_wrapper.dataset
 
         :param gt_id: identifier in the Dataset instance of the output data to evaluate
         :param gt_pos: position of the GT output to evaluate in model's outputs
+
+        :param model_name: name of the attribute where the model for prediction is stored in the Model_Wrapper object
+        :param inputs_mapping_eval: dictionary with inputs mapping for evaluation (only needed if different from training mapping)
+        :param outputs_mapping_eval: dictionary with outputs mapping for evaluation (only needed if different from training mapping)
 
         :param metric_name: name of the performance metric
         :param set_name: list with the names of the set splits that will be evaluated
@@ -111,6 +122,7 @@ class EvalPerformance(KerasCallback):
         :param output_types: list with type identifiers of the different outputs to evaluate
                              (len must coincide with gt_post)
         :param normalize: switch on/off data normalization
+        :param normalization_type: normalization process applied
         :param min_pred_multilabel: minimum prediction value considered for positive prediction
         :param index2word_y: mapping from the indices to words (only needed if is_text==True)
         :param input_text_id:
@@ -153,6 +165,11 @@ class EvalPerformance(KerasCallback):
             gt_id = [gt_id]
 
         self.model_to_eval = model
+
+        self.model_name = model_name
+        self.inputs_mapping_eval = inputs_mapping_eval
+        self.outputs_mapping_eval = outputs_mapping_eval
+
         self.ds = dataset
 
         self.gt_id = gt_id
@@ -182,6 +199,7 @@ class EvalPerformance(KerasCallback):
         self.each_n_epochs = each_n_epochs
         self.extra_vars = extra_vars
         self.normalize = normalize
+        self.normalization_type = normalization_type
         self.save_path = save_path
         self.eval_on_epochs = eval_on_epochs
         self.eval_orig_size = eval_orig_size
@@ -213,7 +231,9 @@ class EvalPerformance(KerasCallback):
             #if not type(self.index2word_x) == list:
             self.index2word_x = [self.index2word_x]
 
-            if 0 not in self.extra_vars.keys():
+            self.min_pred_multilabel = [min_pred_multilabel]
+
+            if 0 not in list(self.extra_vars):
                 self.extra_vars[0] = self.extra_vars
 
             if self.output_types is None:
@@ -227,6 +247,11 @@ class EvalPerformance(KerasCallback):
                     self.output_types = ["NA"]
             else:
                 self.output_types = [self.output_types]
+
+        else:
+            # Convert min_pred_multilabel to list
+            if type(self.min_pred_multilabel) != type(list()):
+                self.min_pred_multilabel = [self.min_pred_multilabel for i in self.gt_pos]
 
         super(EvalPerformance, self).__init__()
 
@@ -262,6 +287,10 @@ class EvalPerformance(KerasCallback):
         self.evaluate(self.cum_update, counter_name='iteration', logs=logs)
 
     def evaluate(self, epoch, counter_name='epoch', logs={}):
+
+        # Change inputs and outputs mappings for evaluation
+        self.changeInOutMappings()
+
         # Evaluate on each set separately
         all_metrics = []
 
@@ -275,6 +304,7 @@ class EvalPerformance(KerasCallback):
                                      self.beam_batch_size is not None else self.batch_size,
                                      'pos_unk': False,
                                      'normalize': self.normalize,
+                                     'normalization_type': self.normalization_type,
                                      'max_eval_samples': self.max_eval_samples
                                      }
 
@@ -286,7 +316,10 @@ class EvalPerformance(KerasCallback):
                                      'n_parallel_loaders': self.extra_vars.get('n_parallel_loaders', 8),
                                      'predict_on_sets': [s],
                                      'normalize': self.normalize,
-                                     'max_eval_samples': self.max_eval_samples}
+                                     'normalization_type': self.normalization_type,
+                                     'max_eval_samples': self.max_eval_samples,
+                                     'model_name': self.model_name,
+                                     }
                 # Convert predictions
                 postprocess_fun = None
                 if self.is_3DLabel:
@@ -297,8 +330,9 @@ class EvalPerformance(KerasCallback):
                     self.model_to_eval.predictNet(self.ds, params_prediction, postprocess_fun=postprocess_fun)[s]
 
             # Single-output model
-            if not self.gt_pos or self.gt_pos == 0:
-                predictions_all = [predictions_all]
+            if not self.gt_pos or self.gt_pos == 0 or len(self.gt_pos) == 1:
+                if len(predictions_all)!=2:
+                    predictions_all = [predictions_all]
                 gt_positions = [0]
 
             # Multi-output model
@@ -318,7 +352,7 @@ class EvalPerformance(KerasCallback):
 
                 if self.verbose > 0:
                     print('')
-                    logging.info('Prediction output ' + str(gt_pos) + ': ' + gt_id + ' (' + type + ')')
+                    logging.info('Prediction output ' + str(gt_pos) + ': ' + str(gt_id) + ' (' + str(type) + ')')
 
                 # Postprocess outputs of type text
                 if type == 'text':
@@ -370,7 +404,7 @@ class EvalPerformance(KerasCallback):
                 elif type == 'binary':
                     predictions = decode_multilabel(predictions,
                                                     index2word_y,
-                                                    min_val=self.min_pred_multilabel,
+                                                    min_val=self.min_pred_multilabel[gt_pos],
                                                     verbose=self.verbose)
 
                     # Prepare references
@@ -490,6 +524,23 @@ class EvalPerformance(KerasCallback):
         if self.save_each_evaluation:
             from keras_wrapper.cnn_model import saveModel
             saveModel(self.model_to_eval, epoch, store_iter=not self.eval_on_epochs)
+
+        # Recover inputs and outputs mappings for resume training
+        self.recoverInOutMappings()
+
+    def changeInOutMappings(self):
+        self.train_mappings = {'in': self.model_to_eval.inputsMapping,
+                               'out': self.model_to_eval.outputsMapping,
+                              }
+
+        if self.inputs_mapping_eval is not None:
+            self.model_to_eval.setInputsMapping(self.inputs_mapping_eval)
+        if self.outputs_mapping_eval is not None:
+            self.model_to_eval.setOutputsMapping(self.outputs_mapping_eval)
+
+    def recoverInOutMappings(self):
+        self.model_to_eval.setInputsMapping(self.train_mappings['in'])
+        self.model_to_eval.setOutputsMapping(self.train_mappings['out'])
 
 
 PrintPerformanceMetricOnEpochEndOrEachNUpdates = EvalPerformance
@@ -615,7 +666,8 @@ class Sample(KerasCallback):
                 params_prediction = {'batch_size': self.batch_size,
                                      'n_parallel_loaders': self.extra_vars['n_parallel_loaders'],
                                      'predict_on_sets': [s],
-                                     'n_samples': self.n_samples}
+                                     'n_samples': self.n_samples,
+                                     }
                 # Convert predictions
                 postprocess_fun = None
                 if self.is_3DLabel:
@@ -671,13 +723,13 @@ class Sample(KerasCallback):
                 # Write samples
                 if self.print_sources:
                     # Write samples
-                    for i, (source, sample, truth) in enumerate(zip(sources, predictions, truths)):
+                    for i, (source, sample, truth) in list(enumerate(zip(sources, predictions, truths))):
                         print("Source     (%d): %s" % (i, str(source.encode('utf-8'))))
                         print("Hypothesis (%d): %s" % (i, str(sample.encode('utf-8'))))
                         print("Reference  (%d): %s" % (i, str(truth.encode('utf-8'))))
                         print("")
                 else:
-                    for i, (sample, truth) in enumerate(zip(predictions, truths)):
+                    for i, (sample, truth) in list(enumerate(zip(predictions, truths))):
                         print("Hypothesis (%d): %s" % (i, str(sample.encode('utf-8'))))
                         print("Reference  (%d): %s" % (i, str(truth.encode('utf-8'))))
                         print("")
@@ -860,9 +912,17 @@ class LearningRateReducer(KerasCallback):
     def reduce_lr(self, current_nb):
         new_rate = self.reduce_rate if self.reduction_function == 'linear' else \
             np.power(self.exp_base, current_nb / self.half_life) * self.reduce_rate
-        lr = self.model.optimizer.lr.get_value()
-        self.new_lr = np.float32(lr * new_rate)
-        self.model.optimizer.lr.set_value(self.new_lr)
+        if K.backend() == 'tensorflow':
+            print('WARNING: learning rate decay is deactivated when using TensorFlow') 
+            """
+            lr = self.model.optimizer.optimizer.get_lr()
+            self.new_lr = np.float32(lr * new_rate)
+            self.model.optimizer.optimizer.set_lr(self.new_lr)
+            """
+        else:
+            lr = self.model.optimizer.lr.get_value()
+            self.new_lr = np.float32(lr * new_rate)
+            self.model.optimizer.lr.set_value(self.new_lr)
 
         if self.reduce_each_epochs and self.verbose > 0:
             logging.info("LR reduction from {0:0.6f} to {1:0.6f}".format(float(lr), float(self.new_lr)))

@@ -11,8 +11,8 @@ Rico Sennrich, Barry Haddow and Alexandra Birch (2015). Neural Machine Translati
 Proceedings of the 54th Annual Meeting of the Association for Computational Linguistics (ACL 2016). Berlin, Germany.
 """
 
-from __future__ import division,unicode_literals
-
+from __future__ import division, unicode_literals
+from six import iteritems
 import sys
 import codecs
 import io
@@ -42,7 +42,7 @@ class BPE(object):
         # some hacking to deal with duplicates (only consider first instance)
         self.bpe_codes = dict([(code, i) for (i, code) in reversed(list(enumerate(self.bpe_codes)))])
 
-        self.bpe_codes_reverse = dict([(pair[0] + pair[1], pair) for pair, i in self.bpe_codes.items()])
+        self.bpe_codes_reverse = dict([(pair[0] + pair[1], pair) for pair, i in list(iteritems(self.bpe_codes))])
 
         self.separator = separator
 
