@@ -721,7 +721,7 @@ def indices_2_one_hot(indices, n):
     :param n: integer. Size of the vocabulary
     :return: numpy array with shape (len(indices), n)
     """
-    one_hot = np.zeros((len(indices), n), dtype=np.int)
+    one_hot = np.zeros((len(indices), n), dtype=np.int8)
     for i in range(len(indices)):
         if indices[i] >= n:
             raise ValueError("Index out of bounds when converting to one hot")

@@ -9,6 +9,84 @@ from keras_wrapper.extra.read_write import list2file
 from keras_wrapper.utils import indices_2_one_hot, decode_predictions_beam_search, one_hot_2_indices
 
 
+def equalize_sentences(y, h, same_length=True, y_as_one_hot=True, h_as_one_hot=True, vocabulary_len_y=None, vocabulary_len_h=None,
+                       compute_masks=True, fixed_length=-1, return_states_below=True, null_idx=2):
+    """
+    Equalizes (max length) the sentences y and h.
+    :param y: Sentence 1 to equalize (e.g. reference). As a list of indices.
+    :param h: Sentence 2 to equalize (e.g. hypothesis). As a list of indices.
+    :param y_as_one_hot: Return sentence y as a one-hot-vector.
+    :param h_as_one_hot: Return sentence y as a one-hot-vector.
+    :param vocabulary_len_y: Vocabulary for converting y to a one-hot-vector.
+    :param vocabulary_len_h: Vocabulary for converting h to a one-hot-vector.
+    :param fixed_length: Fix the length of both sentences to this number (-1 means max(len(y), len(h))).
+    :param return_states_below: Whether to compute the states below of y and h.
+    :return: Equalized y, h (and optionally state_below_y, state_below_h)
+    """
+
+    if y_as_one_hot:
+        assert vocabulary_len_y is not None, 'I need the size of the vocabulary for converting y to one hot!'
+    if h_as_one_hot:
+        assert vocabulary_len_h is not None, 'I need the size of the vocabulary for converting h to one hot!'
+
+    if np.ndim(y) == 2:
+        y = one_hot_2_indices([y])[0]
+    if np.ndim(h) == 2:
+        h = one_hot_2_indices([h])[0]
+
+    if fixed_length > -1:
+        maxlen_y = fixed_length
+        maxlen_h = fixed_length
+    else:
+        if same_length:
+            maxlen_y = max(len(y), len(h))
+            maxlen_h = max(len(y), len(h))
+        else:
+            maxlen_y = len(y)
+            maxlen_h = len(h)
+
+    if compute_masks:
+        mask_y = np.zeros(maxlen_y, dtype='int8')
+        mask_h = np.zeros(maxlen_h, dtype='int8')
+
+    if len(h) != maxlen_h:
+        equalized_h = np.zeros(maxlen_h, dtype='int32')
+        equalized_h[:len(h)] = h[:maxlen_h]
+    else:
+        equalized_h = h
+
+    if len(y) != maxlen_y:
+        equalized_y = np.zeros(maxlen_y, dtype='int32')
+        equalized_y[:len(y)] = y[:maxlen_y]
+    else:
+        equalized_y = y
+
+    if return_states_below:
+        state_below_y = np.asarray(np.append(null_idx, equalized_y[:-1]))
+        state_below_h = np.asarray(np.append(null_idx, equalized_h[:-1]))
+
+    if compute_masks:
+        mask_y[:len(y)] = 1
+        mask_h[:len(h)] = 1
+
+    if y_as_one_hot:
+        equalized_y = np.array(indices_2_one_hot(equalized_y, vocabulary_len_y))
+
+    if h_as_one_hot:
+        equalized_h = np.array(indices_2_one_hot(equalized_h, vocabulary_len_h))
+
+    if return_states_below:
+        if compute_masks:
+            return equalized_y, equalized_h, state_below_y, state_below_h, mask_y, mask_h
+        else:
+            return equalized_y, equalized_h, state_below_y, state_below_h
+    else:
+        if compute_masks:
+            return equalized_y, equalized_h, mask_y, mask_h
+        else:
+            return equalized_y, equalized_h
+
+
 class OnlineTrainer:
     def __init__(self, models, dataset, sampler, params_prediction=None, params_training=None, verbose=0):
         """
@@ -109,13 +187,15 @@ class OnlineTrainer:
         if self.params_prediction['n_best_optimizer']:
             if self.verbose > 0:
                 print ""
-                print "\tReference: ", trg_words[0]
+                print u"\tReference: ", trg_words[0].encode('utf-8')
 
             # Get max length of the hypotheses in the N-best list, for a future mini-batch training.
             maxlen_nbest_hypothesis = y.shape[1] + 1
             # Decode N-best list
             for n_best_preds, n_best_scores, n_best_alphas in n_best:
                 n_best_predictions = []
+                n_best_sources = [sources] * len(n_best_alphas) if sources is not None else None
+
                 for i, (n_best_pred, n_best_score, n_best_alpha) in enumerate(zip(n_best_preds,
                                                                                   n_best_scores,
                                                                                   n_best_alphas)):
@@ -123,8 +203,8 @@ class OnlineTrainer:
                         maxlen_nbest_hypothesis = len(n_best_pred) + 1
                     pred = decode_predictions_beam_search([n_best_pred],
                                                           self.index2word_y,
-                                                          alphas=[n_best_alpha],
-                                                          x_text=sources,
+                                                          alphas=n_best_alpha,
+                                                          x_text=n_best_sources ,
                                                           heuristic=heuristic,
                                                           mapping=self.mapping,
                                                           pad_sequences=True,
@@ -170,17 +250,17 @@ class OnlineTrainer:
                         permutation_index_low = p[i]
                         permutation_index_high = p[j]
                         if permutation_index_low <= permutation_index_high:
-                            print "The %d-th top-prob hypothesis is ok with respect to the %d-th" \
-                                  " top-metric hypothesis " % (i, j,)
-                            print "----------"
+                            print u"The %d-th top-prob hypothesis is ok with respect to the %d-th" \
+                                  u" top-metric hypothesis " % (i, j,)
+                            print u"----------"
                         else:
                             if self.verbose:
-                                print "Mismatch in positions %d and %d. The %d-th hypothesis should be the %d" % \
+                                print u"Mismatch in positions %d and %d. The %d-th hypothesis should be the %d" % \
                                       (i, j, permutation_index_low, permutation_index_high)
-                                print "top-prob h:", n_best_predictions[permutation_index_high][2][0], \
+                                print u"top-prob h:", n_best_predictions[permutation_index_high][2][0].encode('utf-8'), \
                                     self.params_prediction.get('optimizer_regularizer') + ":", \
                                     n_best_predictions[permutation_index_high][3]
-                                print "top_metric_h", n_best_predictions[permutation_index_low][2][0], \
+                                print u"top_metric_h", n_best_predictions[permutation_index_low][2][0].encode('utf-8'), \
                                     self.params_prediction.get('optimizer_regularizer') + ":", \
                                     n_best_predictions[permutation_index_low][3]
 
@@ -266,9 +346,7 @@ class OnlineTrainer:
                     model = model.model
                 if not train_inputs:
                     # Use references
-                    train_inputs = [x, state_below_y, state_below_y, state_below_y,
-                                    np.asarray([1.]),
-                                    y, y, y]
+                    train_inputs = [x, state_below_y, y]
                     train_outputs = np.zeros((train_inputs[0].shape[0], 1), dtype='float32')
                 if train_inputs:
                     # The PAS algorithm requires to set weights and switch the loss subderivative to 1. or 0.
@@ -304,20 +382,23 @@ class OnlineTrainer:
                     # With custom losses, we'll probably use the hypothesis as training sample -> Convert to one-hot
                     # Tensors for computing p(h_i|x)
 
-                    if 'kl_diff' in self.params_training.get('loss'):
-                        if len(trans_indices) < maxlen_hypothesis_reference:
-                            extended_hyp = np.zeros(maxlen_hypothesis_reference, dtype='int64')
-                            extended_hyp[:len(trans_indices)] = trans_indices
-                            trans_indices = extended_hyp
-                        elif len(y[0]) < maxlen_hypothesis_reference:
-                            y_indices = one_hot_2_indices(y)[0]
-                            extended_y = np.zeros(maxlen_hypothesis_reference, dtype='int64')
-                            extended_y[:len(y_indices)] = y_indices
-                            y = np.array([indices_2_one_hot(extended_y, self.dataset.vocabulary_len["target_text"])])
-                            state_below_y = np.asarray([np.append(self.dataset.extra_words['<null>'], extended_y[:-1])])
+                    if 'kl_diff' in self.params_training.get('loss') or 'weighted_log_diff' in self.params_training.get('loss'):
 
-                    hyp = np.array([indices_2_one_hot(trans_indices, self.dataset.vocabulary_len["target_text"])])
-                    state_below_h = np.asarray([np.append(self.dataset.extra_words['<null>'], trans_indices[:-1])])
+                        y, hyp, state_below_y, state_below_h, mask_y, mask_h = equalize_sentences(y[0], trans_indices,
+                                                                                  same_length=True,
+                                                                                  y_as_one_hot=True,
+                                                                                  h_as_one_hot=True,
+                                                                                  vocabulary_len_y=self.dataset.vocabulary_len["target_text"],
+                                                                                  vocabulary_len_h=self.dataset.vocabulary_len["target_text"],
+                                                                                  compute_masks=True)
+                        # Make batches of size 1
+                        y = np.asarray([y], dtype=y.dtype)
+                        hyp = np.asarray([hyp], dtype=hyp.dtype)
+                        state_below_y = np.asarray([state_below_y], dtype=state_below_y.dtype)
+                        state_below_h = np.asarray([state_below_h], dtype=state_below_h.dtype)
+                        mask_y = np.asarray([mask_y], dtype=state_below_y.dtype)
+                        mask_h = np.asarray([mask_h], dtype=state_below_h.dtype)
+
 
                     # Build model inputs according to those required for each loss function
                     if 'log_diff' in self.params_training.get('loss') or 'kl_diff' in self.params_training.get('loss') :
@@ -328,8 +409,8 @@ class OnlineTrainer:
                                        [y, y, hyp]
                     elif 'weighted_log_diff' in self.params_training.get('loss').keys()[0]:
                         train_inputs = [x, state_below_y, state_below_h,
-                                        np.asarray([self.params_training['additional_training_settings'].get('lambda', 0.5)])]  +\
-                                       [y, hyp]
+                                        np.asarray([self.params_training['additional_training_settings'].get('lambda', 0.5)])] + \
+                                       [y, hyp, mask_y, mask_h]
 
                     elif 'hybrid_log_diff' in self.params_training.get('loss').keys()[0]:
                         train_inputs = [x, state_below_y, state_below_h, y, hyp,
@@ -339,6 +420,9 @@ class OnlineTrainer:
                                         np.asarray([self.params_training['additional_training_settings'].get('d', 0.5)]),
                                         np.asarray([self.params_training['additional_training_settings'].get('c', 0.5)]),
                                         p_t_y]
+
+                    elif 'categorical_crossentropy2' in self.params_training.get('loss').keys()[0]:
+                        train_inputs = [x, state_below_y] + [y]
 
                     # Dummy outputs for our dummy loss
                     train_outputs = np.zeros((train_inputs[0].shape[0], 1), dtype='float32')
@@ -355,22 +439,21 @@ class OnlineTrainer:
                                                   batch_size=1, verbose=0)
                         loss = 1.0 if loss_val > 0 else 0.0
                         model.optimizer.loss_value.set_value(loss)
-
-                    for k in range(self.params_training['additional_training_settings'].get('k', 1)):
-                        # Fit!
-                        model.fit(x=train_inputs,
-                                  y=train_outputs,
-                                  batch_size=min(self.params_training['batch_size'], len(x)),
-                                  epochs=self.params_training['n_epochs'],
-                                  verbose=self.params_training['verbose'],
-                                  callbacks=[],
-                                  validation_data=None,
-                                  validation_split=self.params_training.get('val_split', 0.),
-                                  shuffle=self.params_training['shuffle'],
-                                  class_weight=None,
-                                  sample_weight=None,
-                                  initial_epoch=0)
-                        self.n_updates += loss
+                        for k in range(self.params_training['additional_training_settings'].get('k', 1)):
+                            # Fit!
+                            model.fit(x=train_inputs,
+                                      y=train_outputs,
+                                      batch_size=min(self.params_training['batch_size'], len(x)),
+                                      epochs=self.params_training['n_epochs'],
+                                      verbose=self.params_training['verbose'],
+                                      callbacks=[],
+                                      validation_data=None,
+                                      validation_split=self.params_training.get('val_split', 0.),
+                                      shuffle=self.params_training['shuffle'],
+                                      class_weight=None,
+                                      sample_weight=None,
+                                      initial_epoch=0)
+                            self.n_updates += loss
                     # We are optimizing towards an MT metric (BLEU or TER)
                     if self.params_prediction.get('optimizer_regularizer').lower() == 'bleu' or \
                                     self.params_prediction.get('optimizer_regularizer').lower() == 'ter':
@@ -390,6 +473,20 @@ class OnlineTrainer:
 
                         train_outputs = np.zeros((y.shape[0], 1), dtype='float32')
                         # Fit!
+                        model.fit(x=train_inputs,
+                                  y=train_outputs,
+                                  batch_size=min(self.params_training['batch_size'], train_inputs[0].shape[0]),
+                                  epochs=self.params_training['n_epochs'],
+                                  verbose=self.params_training['verbose'],
+                                  callbacks=[],
+                                  validation_data=None,
+                                  validation_split=self.params_training.get('val_split', 0.),
+                                  shuffle=self.params_training['shuffle'],
+                                  class_weight=None,
+                                  sample_weight=None,
+                                  initial_epoch=0)
+                        self.n_updates += 1
+                    else:
                         model.fit(x=train_inputs,
                                   y=train_outputs,
                                   batch_size=min(self.params_training['batch_size'], train_inputs[0].shape[0]),
@@ -492,13 +589,13 @@ class OnlineTrainer:
                 p = np.argsort([nbest[3] for nbest in n_best_predictions])
                 if p[0] == 0:
                     if self.verbose > 0:
-                        print "The top-prob hypothesis and the top bleu hypothesis match"
+                        print u"The top-prob hypothesis and the top bleu hypothesis match"
                 else:
                     if self.verbose:
-                        print "The top-prob hypothesis and the top bleu hypothesis don't match"
-                        print "top-prob h:", n_best_predictions[0][2][0], "Bleu:", 1 - n_best_predictions[0][-1]
-                        print "top_bleu_h", n_best_predictions[p[0]][2][0], "Bleu:", 1 - n_best_predictions[p[0]][-1]
-                        print "Updating..."
+                        print u"The top-prob hypothesis and the top bleu hypothesis don't match"
+                        print u"top-prob h:", n_best_predictions[0][2][0].encode('utf-8'), "Bleu:", 1 - n_best_predictions[0][-1]
+                        print u"top_bleu_h", n_best_predictions[p[0]][2][0].encode('utf-8'), "Bleu:", 1 - n_best_predictions[p[0]][-1]
+                        print u"Updating..."
 
                     top_bleu_h = np.asarray(n_best_predictions[p[0]][1])
                     state_below_top_prob_h = np.asarray([np.append(self.dataset.extra_words['<null>'],
