@@ -545,13 +545,13 @@ class OnlineTrainer:
         x = X[0]
         state_below_y = X[1]
         y = Y[0]
+        mask = Y[1]
 
         if self.params_training.get('use_custom_loss', False):
             raise NotImplementedError, 'Custom loss + train_online (interactive)' \
                                        ' still unimplemented. Refer to sample_and_train_online'
             state_below_h = np.asarray([np.append(self.dataset.extra_words['<null>'], trans_indices[:-1])])
             hyp = np.array([indices_2_one_hot(trans_indices, self.dataset.vocabulary_len["target_text"])])
-
         if self.params_prediction.get('n_best_optimizer', False):
             raise Exception, 'N-best optimizer + train_online (interactive)' \
                              ' still unimplemented. Refer to sample_and_train_online'
@@ -662,7 +662,7 @@ class OnlineTrainer:
                     del params['additional_training_settings']
                     del params['loss']
                     del params['lr']
-                    model.trainNetFromSamples([x, state_below_y], y, params)
+                    model.trainNetFromSamples([x, state_below_y], y, params, sample_weight=mask)
                     self.n_updates += 1
 
     def checkParameters(self, input_params, params_training=False):
