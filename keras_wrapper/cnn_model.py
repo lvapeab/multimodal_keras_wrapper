@@ -8,7 +8,7 @@ import sys
 import time
 
 if sys.version_info.major == 3:
-    import _pickle  as pk
+    import _pickle as pk
 else:
     import cPickle as pk
 import cloudpickle as cloudpk
@@ -16,7 +16,6 @@ import matplotlib as mpl
 
 import keras
 from keras import backend as K
-from keras.applications.vgg19 import VGG19
 from keras.engine.training import Model
 from keras.layers import concatenate, MaxPooling2D, ZeroPadding2D, AveragePooling2D, Dense, Dropout, Flatten, Input, Activation, BatchNormalization
 from keras.layers.advanced_activations import PReLU
@@ -798,12 +797,14 @@ class Model_Wrapper(object):
                           'each_n_epochs': 1,
                           'start_eval_on_epoch': 0,  # early stopping parameters
                           'lr_decay': None,  # LR decay parameters
+                          'initial_lr': 1.,
                           'reduce_each_epochs': True,
                           'start_reduction_on_epoch': 0,
                           'lr_gamma': 0.1,
                           'lr_reducer_type': 'linear',
                           'lr_reducer_exp_base': 0.5,
                           'lr_half_life': 50000,
+                          'lr_warmup_exp': -1.5,
                           'tensorboard': False,
                           'tensorboard_params': {'log_dir': 'tensorboard_logs',
                                                  'histogram_freq': 0,
@@ -877,12 +878,14 @@ class Model_Wrapper(object):
                           'each_n_epochs': 1,
                           'start_eval_on_epoch': 0,  # early stopping parameters
                           'lr_decay': None,  # LR decay parameters
+                          'initial_lr': 1.,
                           'reduce_each_epochs': True,
                           'start_reduction_on_epoch': 0,
                           'lr_gamma': 0.1,
                           'lr_reducer_type': 'linear',
                           'lr_reducer_exp_base': 0.5,
                           'lr_half_life': 50000,
+                          'lr_warmup_exp': -1.5,
                           'tensorboard': False,
                           'tensorboard_params': {'log_dir': 'tensorboard_logs',
                                                  'histogram_freq': 0,
@@ -925,12 +928,14 @@ class Model_Wrapper(object):
 
         # LR reducer
         if params.get('lr_decay') is not None:
-            callback_lr_reducer = LearningRateReducer(reduce_rate=params['lr_gamma'],
+            callback_lr_reducer = LearningRateReducer(initial_lr=params['initial_lr'],
+                                                      reduce_rate=params['lr_gamma'],
                                                       reduce_frequency=params['lr_decay'],
                                                       reduce_each_epochs=params['reduce_each_epochs'],
                                                       start_reduction_on_epoch=params['start_reduction_on_epoch'],
                                                       exp_base=params['lr_reducer_exp_base'],
                                                       half_life=params['lr_half_life'],
+                                                      warmup_exp=params['lr_warmup_exp'],
                                                       reduction_function=params['lr_reducer_type'],
                                                       verbose=params['verbose'])
             callbacks.append(callback_lr_reducer)
@@ -1098,12 +1103,14 @@ class Model_Wrapper(object):
 
         # LR reducer
         if params.get('lr_decay') is not None:
-            callback_lr_reducer = LearningRateReducer(reduce_rate=params['lr_gamma'],
+            callback_lr_reducer = LearningRateReducer(initial_lr=params['initial_lr'],
+                                                      reduce_rate=params['lr_gamma'],
                                                       reduce_frequency=params['lr_decay'],
                                                       reduce_each_epochs=params['reduce_each_epochs'],
                                                       start_reduction_on_epoch=params['start_reduction_on_epoch'],
                                                       exp_base=params['lr_reducer_exp_base'],
                                                       half_life=params['lr_half_life'],
+                                                      warmup_exp=params['lr_warmup_exp'],
                                                       reduction_function=params['lr_reducer_type'],
                                                       verbose=params['verbose'])
             callbacks.append(callback_lr_reducer)
@@ -3323,6 +3330,7 @@ class Model_Wrapper(object):
         # Define inputs and outputs IDs
         self.ids_inputs = ['input_1']
         self.ids_outputs = ['predictions']
+        from keras.applications.vgg19 import VGG19
 
         # Load VGG19 model pre-trained on ImageNet
         self.model = VGG19()
@@ -3341,6 +3349,7 @@ class Model_Wrapper(object):
         # Define inputs and outputs IDs
         self.ids_inputs = ['input_1']
         self.ids_outputs = ['predictions']
+        from keras.applications.vgg19 import VGG19
 
         # Load VGG19 model pre-trained on ImageNet
         self.model = VGG19(weights='imagenet', layers_lr=0.001)

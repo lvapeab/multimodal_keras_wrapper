@@ -1,5 +1,9 @@
 # -*- coding: utf-8 -*-
 import re
+import sys
+import subprocess
+from os import path
+import time
 
 
 def tokenize_basic(caption, lowercase=True):
@@ -162,7 +166,9 @@ def tokenize_none_char(caption):
     tokenized = re.sub('&#91;', ' [ ', tokenized)
     tokenized = re.sub('&#93;', ' ] ', tokenized)
     tokenized = re.sub('[  ]+', ' ', tokenized)
-    tokenized = [convert_chars(char) for char in tokenized.decode('utf-8')]
+    if type(tokenized) == str and sys.version_info < (3, 0):
+        tokenized = tokenized.decode("utf-8")
+    tokenized = [convert_chars(char) for char in tokenized]
     tokenized = " ".join(tokenized)
     return tokenized
 
@@ -251,6 +257,8 @@ def tokenize_questions(caption):
     articles = ['a', 'an', 'the']
 
     def processPunctuation(inText):
+        if type(inText) == str and sys.version_info < (3, 0):
+            inText = inText.decode("utf-8").encode("utf-8")
         outText = inText
         for p in punct:
             if (p + ' ' in inText or ' ' + p in inText) or (re.search(commaStrip, inText) is not None):
@@ -279,10 +287,25 @@ def tokenize_questions(caption):
     resAns = resAns.replace('\n', ' ')
     resAns = resAns.replace('\t', ' ')
     resAns = resAns.strip()
-    resAns = processPunctuation(resAns.decode("utf-8").encode("utf-8"))
+    resAns = processPunctuation(resAns)
     resAns = processDigitArticle(resAns)
 
     return resAns
+
+
+def tokenize_bpe(self, caption):
+    """
+    Applies BPE segmentation (https://github.com/rsennrich/subword-nmt)
+    :param caption: Caption to detokenize.
+    :return: Encoded version of caption.
+    """
+    if not self.BPE_built:
+        raise Exception('Prior to use the "tokenize_bpe" method, you should invoke "build_BPE"')
+    if type(caption) == str and sys.version_info < (3, 0):
+        caption = caption.decode('utf-8')
+    tokenized = re.sub(u'[\n\t]+', u'', caption)
+    tokenized = self.BPE.segment(tokenized).strip()
+    return tokenized
 
 
 def detokenize_none(caption):
@@ -291,7 +314,7 @@ def detokenize_none(caption):
     :param caption: String to de-tokenize.
     :return: Same caption.
     """
-    if type(caption) == str:
+    if type(caption) == str and sys.version_info < (3, 0):
         caption = caption.decode('utf-8')
     return caption
 
@@ -303,7 +326,7 @@ def detokenize_bpe(caption, separator=u'@@'):
     :param separator: BPE separator.
     :return: Detokenized version of caption.
     """
-    if type(caption) == str:
+    if type(caption) == str and sys.version_info < (3, 0):
         caption = caption.decode('utf-8')
     bpe_detokenization = re.compile(u'(' + separator + u' )|(' + separator + u' ?$)')
     detokenized = bpe_detokenization.sub(u'', caption).strip()
