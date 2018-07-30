@@ -1,4 +1,5 @@
 # -*- coding: utf-8 -*-
+from __future__ import print_function
 import copy
 import logging
 
@@ -186,8 +187,8 @@ class OnlineTrainer:
         # If we are working with an n-best list, we'll probably have to decode it
         if self.params_prediction['n_best_optimizer']:
             if self.verbose > 0:
-                print ""
-                print u"\tReference: ", trg_words[0].encode('utf-8')
+                print ("")
+                print (u"\tReference: ", trg_words[0].encode('utf-8'))
 
             # Get max length of the hypotheses in the N-best list, for a future mini-batch training.
             maxlen_nbest_hypothesis = y.shape[1] + 1
@@ -250,19 +251,17 @@ class OnlineTrainer:
                         permutation_index_low = p[i]
                         permutation_index_high = p[j]
                         if permutation_index_low <= permutation_index_high:
-                            print u"The %d-th top-prob hypothesis is ok with respect to the %d-th" \
-                                  u" top-metric hypothesis " % (i, j,)
-                            print u"----------"
+                            pass
                         else:
                             if self.verbose:
-                                print u"Mismatch in positions %d and %d. The %d-th hypothesis should be the %d" % \
-                                      (i, j, permutation_index_low, permutation_index_high)
-                                print u"top-prob h:", n_best_predictions[permutation_index_high][2][0].encode('utf-8'), \
+                                print (u"Mismatch in positions %d and %d. The %d-th hypothesis should be the %d" % \
+                                      (i, j, permutation_index_low, permutation_index_high))
+                                print (u"top-prob h:", n_best_predictions[permutation_index_high][2][0].encode('utf-8'), \
                                     self.params_prediction.get('optimizer_regularizer') + ":", \
-                                    n_best_predictions[permutation_index_high][3]
-                                print u"top_metric_h", n_best_predictions[permutation_index_low][2][0].encode('utf-8'), \
+                                    n_best_predictions[permutation_index_high][3])
+                                print (u"top_metric_h", n_best_predictions[permutation_index_low][2][0].encode('utf-8'), \
                                     self.params_prediction.get('optimizer_regularizer') + ":", \
-                                    n_best_predictions[permutation_index_low][3]
+                                    n_best_predictions[permutation_index_low][3])
 
                             # Log diff loss: p(h_i|x) - p(h_j|x) -> We need to compute 2 logprobs
                             if 'log_diff' in self.params_training.get('loss').keys()[0] or 'kl_diff' in self.params_training.get('loss').keys()[0] :
@@ -337,8 +336,7 @@ class OnlineTrainer:
                                     train_inputs = [x, state_below_top_prob_h, top_prob_h, sign]
                                 train_outputs = np.zeros((train_inputs[0].shape[0], 1), dtype='float32')
                             else:
-                                raise NotImplementedError, 'The loss function " %s " is still unimplemented.' % \
-                                                           self.params_training.get('loss')
+                                raise NotImplementedError('The loss function " %s " is still unimplemented.' % self.params_training.get('loss'))
             # Update the models
             for model in self.models:
                 # We are always working with Model from Keras
@@ -548,16 +546,14 @@ class OnlineTrainer:
         mask = Y[1]
 
         if self.params_training.get('use_custom_loss', False):
-            raise NotImplementedError, 'Custom loss + train_online (interactive)' \
-                                       ' still unimplemented. Refer to sample_and_train_online'
+            raise NotImplementedError('Custom loss + train_online (interactive) is still unimplemented. Refer to sample_and_train_online')
             state_below_h = np.asarray([np.append(self.dataset.extra_words['<null>'], trans_indices[:-1])])
             hyp = np.array([indices_2_one_hot(trans_indices, self.dataset.vocabulary_len["target_text"])])
         if self.params_prediction.get('n_best_optimizer', False):
-            raise Exception, 'N-best optimizer + train_online (interactive)' \
-                             ' still unimplemented. Refer to sample_and_train_online'
+            raise BaseException ('N-best optimizer + train_online (interactive) is still unimplemented. Refer to sample_and_train_online')
             if self.verbose > 0:
-                print ""
-                print "\tReference: ", trg_words[0]
+                print ("")
+                print ("\tReference: ", trg_words[0])
             for n_best_preds, n_best_scores, n_best_alphas in n_best:
                 n_best_predictions = []
                 for i, (n_best_pred, n_best_score, n_best_alpha) in enumerate(zip(n_best_preds,
@@ -589,13 +585,13 @@ class OnlineTrainer:
                 p = np.argsort([nbest[3] for nbest in n_best_predictions])
                 if p[0] == 0:
                     if self.verbose > 0:
-                        print u"The top-prob hypothesis and the top bleu hypothesis match"
+                        print (u"The top-prob hypothesis and the top bleu hypothesis match")
                 else:
                     if self.verbose:
-                        print u"The top-prob hypothesis and the top bleu hypothesis don't match"
-                        print u"top-prob h:", n_best_predictions[0][2][0].encode('utf-8'), "Bleu:", 1 - n_best_predictions[0][-1]
-                        print u"top_bleu_h", n_best_predictions[p[0]][2][0].encode('utf-8'), "Bleu:", 1 - n_best_predictions[p[0]][-1]
-                        print u"Updating..."
+                        print (u"The top-prob hypothesis and the top bleu hypothesis don't match")
+                        print (u"top-prob h:", n_best_predictions[0][2][0].encode('utf-8'), "Bleu:", 1 - n_best_predictions[0][-1])
+                        print (u"top_bleu_h", n_best_predictions[p[0]][2][0].encode('utf-8'), "Bleu:", 1 - n_best_predictions[p[0]][-1])
+                        print (u"Updating...")
 
                     top_bleu_h = np.asarray(n_best_predictions[p[0]][1])
                     state_below_top_prob_h = np.asarray([np.append(self.dataset.extra_words['<null>'],
@@ -628,8 +624,7 @@ class OnlineTrainer:
             # 3. Update net parameters with the corrected samples
             for model in self.models:
                 if self.params_training.get('use_custom_loss', False):
-                    raise NotImplementedError, 'Custom loss optimizers + train_online (interactive) ' \
-                                               'still unimplemented. Refer to sample_and_train_online'
+                    raise NotImplementedError('Custom loss optimizers + train_online (interactive) still unimplemented. Refer to sample_and_train_online')
 
                     weights = model.trainable_weights
                     # weights.sort(key=lambda x: x.name if x.name else x.auto_name)
