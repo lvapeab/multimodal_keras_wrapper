@@ -22,13 +22,12 @@ from keras.layers.advanced_activations import PReLU
 from keras.models import Sequential, model_from_json, load_model
 from keras.optimizers import *
 from keras.regularizers import l2
-from keras.utils import np_utils
 from keras.utils.layer_utils import print_summary
 from keras_wrapper.dataset import Data_Batch_Generator, Homogeneous_Data_Batch_Generator, Parallel_Data_Batch_Generator
 from keras_wrapper.extra.callbacks import *
 from keras_wrapper.extra.read_write import file2list
 from keras_wrapper.utils import one_hot_2_indices, decode_predictions, decode_predictions_one_hot, \
-    decode_predictions_beam_search, replace_unknown_words, sample, sampling
+    decode_predictions_beam_search, replace_unknown_words, sample, sampling, categorical_probas_to_classes
 
 if int(keras.__version__.split('.')[0]) == 1:
     from keras.layers import Concat as Concatenate
@@ -784,6 +783,9 @@ class Model_Wrapper(object):
                           'normalization_type': '(-1)-1',
                           'mean_substraction': False,
                           'data_augmentation': True,
+                          'wo_da_patch_type': 'whole', # wo_da_patch_type = 'central_crop' or 'whole'. 
+                          'da_patch_type':'resize_and_rndcrop', # da_patch_type = 'resize_and_rndcrop', 'rndcrop_and_resize' or 'resizekp_and_rndcrop'.
+                          'da_enhance_list':[], # da_enhance_list = {brightness, color, sharpness, contrast}
                           'verbose': 1, 'eval_on_sets': ['val'],
                           'reload_epoch': 0,
                           'extra_callbacks': [],
@@ -866,6 +868,9 @@ class Model_Wrapper(object):
                           'normalization_type': None,
                           'mean_substraction': False,
                           'data_augmentation': True,
+                          'wo_da_patch_type': 'whole', # wo_da_patch_type = 'central_crop' or 'whole'. 
+                          'da_patch_type':'resize_and_rndcrop', # da_patch_type = 'resize_and_rndcrop', 'rndcrop_and_resize' or 'resizekp_and_rndcrop'.
+                          'da_enhance_list':[], # da_enhance_list = {brightness, color, sharpness, contrast}
                           'verbose': 1,
                           'eval_on_sets': ['val'],
                           'reload_epoch': 0,
@@ -1006,6 +1011,9 @@ class Model_Wrapper(object):
                                                          normalization=params['normalize'],
                                                          normalization_type=params['normalization_type'],
                                                          data_augmentation=params['data_augmentation'],
+                                                         wo_da_patch_type = params['wo_da_patch_type'], 
+                                                         da_patch_type = params['da_patch_type'], 
+                                                         da_enhance_list = params['da_enhance_list'], 
                                                          mean_substraction=params['mean_substraction']).generator()
         elif params['n_parallel_loaders'] > 1:
             train_gen = Parallel_Data_Batch_Generator('train',
@@ -1016,6 +1024,9 @@ class Model_Wrapper(object):
                                                       normalization=params['normalize'],
                                                       normalization_type=params['normalization_type'],
                                                       data_augmentation=params['data_augmentation'],
+                                                      wo_da_patch_type = params['wo_da_patch_type'], 
+                                                      da_patch_type = params['da_patch_type'], 
+                                                      da_enhance_list = params['da_enhance_list'], 
                                                       mean_substraction=params['mean_substraction'],
                                                       shuffle=params['shuffle'],
                                                       n_parallel_loaders=params['n_parallel_loaders']).generator()
@@ -1028,6 +1039,9 @@ class Model_Wrapper(object):
                                              normalization=params['normalize'],
                                              normalization_type=params['normalization_type'],
                                              data_augmentation=params['data_augmentation'],
+                                             wo_da_patch_type = params['wo_da_patch_type'], 
+                                             da_patch_type = params['da_patch_type'], 
+                                             da_enhance_list = params['da_enhance_list'], 
                                              mean_substraction=params['mean_substraction'],
                                              shuffle=params['shuffle']).generator()
 
@@ -1166,6 +1180,7 @@ class Model_Wrapper(object):
                           'n_parallel_loaders': 1,
                           'normalize': True,
                           'normalization_type': None,
+                          'wo_da_patch_type' : 'whole', 
                           'mean_substraction': False}
         params = self.checkParameters(parameters, default_params)
         self.testing_parameters.append(copy.copy(params))
@@ -1184,6 +1199,7 @@ class Model_Wrapper(object):
                                                      normalization=params['normalize'],
                                                      normalization_type=params['normalization_type'],
                                                      data_augmentation=False,
+                                                     wo_da_patch_type = params['wo_da_patch_type'],
                                                      mean_substraction=params['mean_substraction'],
                                                      n_parallel_loaders=params['n_parallel_loaders']).generator()
         else:
@@ -1192,6 +1208,7 @@ class Model_Wrapper(object):
                                             normalization=params['normalize'],
                                             normalization_type=params['normalization_type'],
                                             data_augmentation=False,
+                                            wo_da_patch_type = params['wo_da_patch_type'],
                                             mean_substraction=params['mean_substraction']).generator()
 
         out = self.model.evaluate_generator(data_gen,
@@ -2254,6 +2271,7 @@ class Model_Wrapper(object):
                           'n_parallel_loaders': 1,
                           'normalize': True,
                           'normalization_type': '(-1)-1',
+                          'wo_da_patch_type' : 'whole',
                           'mean_substraction': False,
                           'n_samples': None,
                           'init_sample': -1,
@@ -2290,6 +2308,7 @@ class Model_Wrapper(object):
                                                              normalization=params['normalize'],
                                                              normalization_type=params['normalization_type'],
                                                              data_augmentation=False,
+                                                             wo_da_patch_type = params['wo_da_patch_type'],
                                                              mean_substraction=params['mean_substraction'],
                                                              init_sample=params['init_sample'],
                                                              final_sample=params['final_sample'],
@@ -2304,6 +2323,7 @@ class Model_Wrapper(object):
                                                     normalization=params['normalize'],
                                                     normalization_type=params['normalization_type'],
                                                     data_augmentation=False,
+                                                    wo_da_patch_type = params['wo_da_patch_type'],
                                                     mean_substraction=params['mean_substraction'],
                                                     init_sample=params['init_sample'],
                                                     final_sample=params['final_sample'],
@@ -2322,6 +2342,7 @@ class Model_Wrapper(object):
                                                              normalization=params['normalize'],
                                                              normalization_type=params['normalization_type'],
                                                              data_augmentation=False,
+                                                             wo_da_patch_type = params['wo_da_patch_type'],
                                                              mean_substraction=params['mean_substraction'],
                                                              predict=True,
                                                              random_samples=n_samples,
@@ -2335,6 +2356,7 @@ class Model_Wrapper(object):
                                                     normalization=params['normalize'],
                                                     normalization_type=params['normalization_type'],
                                                     data_augmentation=False,
+                                                    wo_da_patch_type = params['wo_da_patch_type'],
                                                     mean_substraction=params['mean_substraction'],
                                                     predict=True,
                                                     random_samples=n_samples).generator()
@@ -2500,6 +2522,7 @@ class Model_Wrapper(object):
                           'beam_size': 5,
                           'normalize': True,
                           'normalization_type': None,
+                          'wo_da_patch_type' : 'whole', 
                           'mean_substraction': False,
                           'predict_on_sets': ['val'],
                           'maxlen': 20,
@@ -2542,6 +2565,7 @@ class Model_Wrapper(object):
                                                          normalization=params['normalize'],
                                                          normalization_type=params['normalization_type'],
                                                          data_augmentation=False,
+                                                         wo_da_patch_type = params['wo_da_patch_type'],
                                                          mean_substraction=params['mean_substraction'],
                                                          predict=False,
                                                          n_parallel_loaders=params['n_parallel_loaders']).generator()
@@ -2555,6 +2579,7 @@ class Model_Wrapper(object):
                                                 normalization=params['normalize'],
                                                 normalization_type=params['normalization_type'],
                                                 data_augmentation=False,
+                                                wo_da_patch_type = params['wo_da_patch_type'],
                                                 mean_substraction=params['mean_substraction'],
                                                 predict=False).generator()
             sources_sampling = []
@@ -2792,9 +2817,9 @@ class Model_Wrapper(object):
         accuracies = dict()
         top_accuracies = dict()
         for key, val in iteritems(prediction):
-            pred = np_utils.categorical_probas_to_classes(val)
+            pred = categorical_probas_to_classes(val)
             top_pred = np.argsort(val, axis=1)[:, ::-1][:, :np.min([topN, val.shape[1]])]
-            GT = np_utils.categorical_probas_to_classes(data[key])
+            GT = categorical_probas_to_classes(data[key])
 
             # Top1 accuracy
             correct = [1 if pred[i] == GT[i] else 0 for i in range(len(pred))]
@@ -2812,7 +2837,7 @@ class Model_Wrapper(object):
             Calculates the topN accuracy obtained from a set of samples on a Sequential model.
         """
         top_pred = np.argsort(pred, axis=1)[:, ::-1][:, :np.min([topN, pred.shape[1]])]
-        pred = np_utils.categorical_probas_to_classes(pred)
+        pred = categorical_probas_to_classes(pred)
         GT = np_utils.categorical_probas_to_classes(GT)
 
         # Top1 accuracy
@@ -2838,42 +2863,6 @@ class Model_Wrapper(object):
         # if(isinstance(self.model, Model)):
         print_summary(self.model.layers)
         return ''
-
-        obj_str = '-----------------------------------------------------------------------------------\n'
-        class_name = self.__class__.__name__
-        obj_str += '\t\t' + class_name + ' instance\n'
-        obj_str += '-----------------------------------------------------------------------------------\n'
-
-        # Print pickled attributes
-        for att in self.__toprint:
-            obj_str += att + ': ' + str(self.__dict__[att])
-            obj_str += '\n'
-
-        # Print layers structure
-        obj_str += "\n::: Layers structure:\n\n"
-        obj_str += 'MODEL TYPE: ' + self.model.__class__.__name__ + '\n'
-        if isinstance(self.model, Sequential):
-            obj_str += "INPUT: " + str(tuple(self.model.layers[0].input_shape)) + "\n"
-            for i, layer in list(enumerate(self.model.layers)):
-                obj_str += str(layer.name) + ' ' + str(layer.output_shape) + '\n'
-            obj_str += "OUTPUT: " + str(self.model.layers[-1].output_shape) + "\n"
-        else:
-            for i, inputs in list(enumerate(self.model.input_config)):
-                obj_str += "INPUT (" + str(i) + "): " + str(inputs['name']) + ' ' + str(
-                    tuple(inputs['input_shape'])) + "\n"
-            for node in self.model.node_config:
-                obj_str += str(node['name']) + ', in [' + str(node['input']) + ']' + ', out_shape: ' + str(
-                    self.model.nodes[node['name']].output_shape) + '\n'
-            for i, outputs in list(enumerate(self.model.output_config)):
-                obj_str += "OUTPUT (" + str(i) + "): " + str(outputs['name']) + ', in [' + str(
-                    outputs['input']) + ']' + ', out_shape: ' + str(
-                    self.model.outputs[outputs['name']].output_shape) + "\n"
-
-        obj_str += '-----------------------------------------------------------------------------------\n'
-
-        print_summary(self.model.layers)
-
-        return obj_str
 
     def log(self, mode, data_type, value):
         """
