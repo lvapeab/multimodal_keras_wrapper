@@ -1846,17 +1846,7 @@ class Dataset(object):
         :param language: Tokenizer language.
         :return: None
         """
-        import nltk
-        try:
-            nltk.data.find('misc/perluniprops')
-        except LookupError:
-            nltk.download('perluniprops')
-        try:
-            nltk.data.find('corpora/nonbreaking_prefixes')
-        except LookupError:
-            nltk.download('nonbreaking_prefixes')
-        from nltk.tokenize.moses import MosesTokenizer
-
+        from sacremoses import MosesTokenizer
         self.moses_tokenizer = MosesTokenizer(lang=language)
         self.moses_tokenizer_built = True
 
@@ -1871,16 +1861,7 @@ class Dataset(object):
                            nor concatenated with other subwords.
         :return: None
         """
-        import nltk
-        try:
-            nltk.data.find('misc/perluniprops')
-        except LookupError:
-            nltk.download('perluniprops')
-        try:
-            nltk.data.find('corpora/nonbreaking_prefixes')
-        except LookupError:
-            nltk.download('nonbreaking_prefixes')
-        from nltk.tokenize.moses import MosesDetokenizer
+        from sacremoses import MosesDetokenizer
         self.moses_detokenizer = MosesDetokenizer(lang=language)
         self.moses_detokenizer_built = True
 
@@ -2404,7 +2385,7 @@ class Dataset(object):
 
     def tokenize_moses(self, caption, language='en', lowercase=False, aggressive_dash_splits=False, return_str=True, escape=False):
         """
-        Applies the Moses tokenization. Relying on NLTK implementation of the Moses tokenizer.
+        Applies the Moses tokenization. Relying on sacremoses' implementation of the Moses tokenizer.
 
         :param caption: Sentence to tokenize
         :param language: Language (will build the tokenizer for this language)
@@ -2424,12 +2405,12 @@ class Dataset(object):
         tokenized = re.sub(u'[\n\t]+', u'', caption)
         if lowercase:
             tokenized = tokenized.lower()
-        return self.moses_tokenizer.tokenize(tokenized, agressive_dash_splits=aggressive_dash_splits,
+        return self.moses_tokenizer.tokenize(tokenized, aggressive_dash_splits=aggressive_dash_splits,
                                              return_str=return_str, escape=escape)
 
     def detokenize_moses(self, caption, language='en', lowercase=False, return_str=True, unescape=True):
         """
-        Applies the Moses detokenization. Relying on NLTK implementation of the Moses tokenizer.
+        Applies the Moses detokenization. Relying on sacremoses' implementation of the Moses tokenizer.
 
         :param caption: Sentence to tokenize
         :param language: Language (will build the tokenizer for this language)
