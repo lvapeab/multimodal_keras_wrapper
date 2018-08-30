@@ -126,9 +126,8 @@ class BeamSearchEnsemble:
                          params['output_min_length_depending_on_x_factor'] + 1e-7) \
                 if params['output_min_length_depending_on_x'] else 0
         else:
-            minlen = int(np.argmax(X[params['dataset_inputs'][0]][0] == eos_sym)
-                         / params['output_min_length_depending_on_x_factor'] + 1e-7) if \
-                params['output_min_length_depending_on_x'] else 0
+            minlen = int(np.argmax(X[params['dataset_inputs'][0]][0] == eos_sym) /
+                         params['output_min_length_depending_on_x_factor'] + 1e-7) if params['output_min_length_depending_on_x'] else 0
 
             maxlen = int(np.argmax(X[params['dataset_inputs'][0]][0] == eos_sym) * params[
                 'output_max_length_depending_on_x_factor']) if \
@@ -314,9 +313,11 @@ class BeamSearchEnsemble:
         predictions = dict()
         for s in params['predict_on_sets']:
             logging.info("\n <<< Predicting outputs of " + s + " set >>>")
-            assert len(params['model_inputs']) > 0, 'We need at least one input!'
+            if len(params['model_inputs']) == 0:
+                raise AssertionError('We need at least one input!')
             if not params['optimized_search']:  # use optimized search model if available
-                assert not params['pos_unk'], 'PosUnk is not supported with non-optimized beam search methods'
+                if params['pos_unk']:
+                    raise AssertionError('PosUnk is not supported with non-optimized beam search methods')
             params['pad_on_batch'] = self.dataset.pad_on_batch[params['dataset_inputs'][-1]]
             # Calculate how many interations are we going to perform
             if params['n_samples'] < 1:
@@ -403,8 +404,7 @@ class BeamSearchEnsemble:
 
                     if params['length_penalty'] or params['coverage_penalty']:
                         if params['length_penalty']:
-                            length_penalties = [((5 + len(sample)) ** params['length_norm_factor']
-                                                 / (5 + 1) ** params['length_norm_factor'])
+                            length_penalties = [((5 + len(sample)) ** params['length_norm_factor'] / (5 + 1) ** params['length_norm_factor'])
                                                 # this 5 is a magic number by Google...
                                                 for sample in samples]
                         else:
@@ -528,8 +528,7 @@ class BeamSearchEnsemble:
 
         if params['length_penalty'] or params['coverage_penalty']:
             if params['length_penalty']:
-                length_penalties = [((5 + len(sample)) ** params['length_norm_factor']
-                                     / (5 + 1) ** params['length_norm_factor'])  # this 5 is a magic number by Google...
+                length_penalties = [((5 + len(sample)) ** params['length_norm_factor'] / (5 + 1) ** params['length_norm_factor'])  # this 5 is a magic number by Google...
                                     for sample in samples]
             else:
                 length_penalties = [1.0 for _ in samples]
@@ -722,9 +721,11 @@ class BeamSearchEnsemble:
 
         for s in params['predict_on_sets']:
             logging.info("<<< Scoring outputs of " + s + " set >>>")
-            assert len(params['model_inputs']) > 0, 'We need at least one input!'
+            if len(params['model_inputs']) == 0:
+                raise AssertionError('We need at least one input!')
             if not params['optimized_search']:  # use optimized search model if available
-                assert not params['pos_unk'], 'PosUnk is not supported with non-optimized beam search methods'
+                if params['pos_unk']:
+                    raise AssertionError('PosUnk is not supported with non-optimized beam search methods')
             params['pad_on_batch'] = self.dataset.pad_on_batch[params['dataset_inputs'][-1]]
             # Calculate how many interations are we going to perform
             n_samples = eval("self.dataset.len_" + s)
@@ -749,7 +750,7 @@ class BeamSearchEnsemble:
             sampled = 0
             start_time = time.time()
             eta = -1
-            for j in range(num_iterations):
+            for _ in range(num_iterations):
                 data = next(data_gen)
                 X = dict()
                 s_dict = {}
@@ -782,9 +783,7 @@ class BeamSearchEnsemble:
 
                     if params['length_penalty'] or params['coverage_penalty']:
                         if params['length_penalty']:
-                            length_penalty = ((5 + len(sample)) ** params['length_norm_factor']
-                                              / (5 + 1) ** params[
-                                                  'length_norm_factor'])  # this 5 is a magic number by Google...
+                            length_penalty = ((5 + len(sample)) ** params['length_norm_factor'] / (5 + 1) ** params['length_norm_factor'])  # this 5 is a magic number by Google...
                         else:
                             length_penalty = 1.0
 
@@ -903,9 +902,7 @@ class BeamSearchEnsemble:
 
             if params['length_penalty'] or params['coverage_penalty']:
                 if params['length_penalty']:
-                    length_penalty = ((5 + len(sample)) ** params['length_norm_factor']
-                                      / (5 + 1) ** params[
-                                          'length_norm_factor'])  # this 5 is a magic number by Google...
+                    length_penalty = ((5 + len(sample)) ** params['length_norm_factor'] / (5 + 1) ** params['length_norm_factor'])  # this 5 is a magic number by Google...
                 else:
                     length_penalty = 1.0
 
@@ -1001,7 +998,7 @@ class PredictEnsemble:
         """
 
         outs_list = []
-        for i, m in list(enumerate(models)):
+        for m in list(models):
             outs_list.append(m.model.predict_on_batch(data_gen, val_samples, max_q_size))
         outs = sum(outs_list[i] for i in range(len(models))) / float(len(models))
         return outs
@@ -1078,8 +1075,8 @@ class PredictEnsemble:
 
         for s in params['predict_on_sets']:
             logging.info("\n <<< Predicting outputs of " + s + " set >>>")
-            assert len(params['model_inputs']) > 0, 'We need at least one input!'
-
+            if len(params['model_inputs']) == 0:
+                raise AssertionError('We need at least one input!')
             # Calculate how many interations are we going to perform
             if params['n_samples'] is None:
                 if params['init_sample'] > -1 and params['final_sample'] > -1:
@@ -1120,15 +1117,13 @@ class PredictEnsemble:
                                                 predict=True,
                                                 random_samples=n_samples).generator()
             # Predict on model
-            """
-            if self.postprocess_fun is None:
-
-                out = self.predict_generator(self.models,
-                                             data_gen,
-                                             val_samples=n_samples,
-                                             max_q_size=params['n_parallel_loaders'])
-                predictions[s] = out
-            """
+            # if self.postprocess_fun is None:
+            #
+            #     out = self.predict_generator(self.models,
+            #                                  data_gen,
+            #                                  val_samples=n_samples,
+            #                                  max_q_size=params['n_parallel_loaders'])
+            #     predictions[s] = out
             processed_samples = 0
             start_time = time.time()
             while processed_samples < n_samples:

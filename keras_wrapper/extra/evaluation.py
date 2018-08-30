@@ -32,7 +32,8 @@ def get_coco_score(pred_list, verbose, extra_vars, split):
 
     gts = extra_vars[split]['references']
     if extra_vars.get('tokenize_hypotheses', False):
-        hypo = {idx: list(map(extra_vars['tokenize_f'], [lines.strip()])) for (idx, lines) in list(enumerate(pred_list))}
+        hypo = {idx: list(map(extra_vars['tokenize_f'], [lines.strip()])) for (idx, lines) in
+                list(enumerate(pred_list))}
     else:
         hypo = {idx: [lines.strip()] for (idx, lines) in list(enumerate(pred_list))}
 
@@ -42,7 +43,7 @@ def get_coco_score(pred_list, verbose, extra_vars, split):
     else:
         refs = gts
 
-    # Detokenize references if needed.    
+    # Detokenize references if needed.
     if extra_vars.get('apply_detokenization', False):
         refs = {idx: list(map(extra_vars['detokenize_f'], refs[idx])) for idx in refs}
 
@@ -58,7 +59,7 @@ def get_coco_score(pred_list, verbose, extra_vars, split):
     final_scores = {}
     for scorer, method in scorers:
         score, _ = scorer.compute_score(refs, hypo)
-        if type(score) == list:
+        if isinstance(score, list):
             for m, s in list(zip(method, score)):
                 final_scores[m] = s
         else:
@@ -218,7 +219,6 @@ def multiclass_metrics(pred_list, verbose, extra_vars, split):
     :return: dictionary of multiclass metrics
     """
     from sklearn import metrics as sklearn_metrics
-    import numpy as np
 
     n_classes = extra_vars['n_classes']
 
@@ -255,24 +255,24 @@ def multiclass_metrics(pred_list, verbose, extra_vars, split):
     avrg = extra_vars.get('average_mode', None)
     precision, recall, f1, _ = sklearn_metrics.precision_recall_fscore_support(y_gt, y_pred, average=avrg)
     # Compute Confusion Matrix
-    cf = sklearn_metrics.confusion_matrix(np.argmax(y_gt,-1), np.argmax(y_pred,-1))
+    cf = sklearn_metrics.confusion_matrix(np.argmax(y_gt, -1), np.argmax(y_pred, -1))
     identity = np.identity(n_classes)
     neg_identity = 1 - identity
     # Compute TP, FP and FN from Confusion Matrix.
     tp = np.diag(cf)
-    fp = np.sum(cf*neg_identity, axis=1)
-    fn = np.sum(cf*neg_identity, axis=0)
+    fp = np.sum(cf * neg_identity, axis=1)
+    fn = np.sum(cf * neg_identity, axis=0)
     # Compute precision and recall per class
     condition_positive = tp + fn
     pred_condition_positive = tp + fp
-    precision_per_class = tp/pred_condition_positive
-    recall_per_class = tp/condition_positive
+    precision_per_class = tp / pred_condition_positive
+    recall_per_class = tp / condition_positive
     # Compute top 5 fp classes
-    top5_fps = np.argpartition(cf*neg_identity, -5)[:,-5:][:,::-1]
+    top5_fps = np.argpartition(cf * neg_identity, -5)[:, -5:][:, ::-1]
     # Compute top 5 accuracy
-    arg_top5_pred = np.argpartition(y_pred, -5)[:,-5:]
+    arg_top5_pred = np.argpartition(y_pred, -5)[:, -5:]
     arg_gt = np.argmax(y_gt, -1)
-    top5_acc = np.mean(np.max(arg_top5_pred == np.repeat(np.expand_dims(arg_gt,-1), 5, -1),-1))
+    top5_acc = np.mean(np.max(arg_top5_pred == np.repeat(np.expand_dims(arg_gt, -1), 5, -1), -1))
 
     if verbose > 0:
         logging.info('Top5 Accuracy: %f' % top5_acc)
@@ -326,7 +326,7 @@ def semantic_segmentation_accuracy(pred_list, verbose, extra_vars, split):
     y_pred = np.zeros((n_samples, n_classes))
 
     ind_i = 0
-    for i_s, (gt_class, pred_class) in list(enumerate(zip(values_gt, pred_class_list))):
+    for _, (gt_class, pred_class) in list(enumerate(zip(values_gt, pred_class_list))):
         if not any([d == gt_class for d in discard_classes]):
             y_pred[ind_i, pred_class] = 1
             y_gt[ind_i, gt_class] = 1
@@ -408,7 +408,7 @@ def semantic_segmentation_meaniou(pred_list, verbose, extra_vars, split):
 
     mean_iou = np.mean(inter / union)
     acc = np.sum(inter) / np.sum(cm)
-    
+
     if verbose > 0:
         logging.info('Mean IoU: %f' % mean_iou)
         logging.info('Accuracy: %f' % float(acc))
@@ -742,8 +742,8 @@ def vqa_store(question_id_list, answer_list, path):
         path - path where the file is saved
     """
     question_answer_pairs = []
-    assert len(question_id_list) == len(answer_list), \
-        'must be the same number of questions and answers'
+    if len(question_id_list) != len(answer_list):
+        raise AssertionError('must be the same number of questions and answers')
     for q, a in list(zip(question_id_list, answer_list)):
         question_answer_pairs.append({'question_id': q, 'answer': str(a)})
     with open(path, 'w') as f:
