@@ -648,7 +648,7 @@ def simplifyDataset(ds, id_classes, n_classes=50):
                     sample = y_split[id_out][i]
                     try:
                         kept_Y[id_out].append(sample)
-                    except:
+                    except Exception:
                         kept_Y[id_out] = []
                         kept_Y[id_out].append(sample)
                 for id_in in ds.ids_inputs:
@@ -657,7 +657,7 @@ def simplifyDataset(ds, id_classes, n_classes=50):
                     sample = x_split[id_in][i]
                     try:
                         kept_X[id_in].append(sample)
-                    except:
+                    except Exception:
                         kept_X[id_in] = []
                         kept_X[id_in].append(sample)
         # exec ('ds.X_' + s + ' = copy.copy(kept_X)')
@@ -936,7 +936,7 @@ def replace_unknown_words(src_word_seq, trg_word_seq, hard_alignment, unk_symbol
     for j in range(len(trans_words)):
         if trans_words[j] == unk_symbol:
             UNK_src = src_word_seq[hard_alignment[j]]
-            if isinstance(UNK_src, str):
+            if isinstance(UNK_src, str) and sys.version_info.major == 2:
                 UNK_src = UNK_src.decode('utf-8')
             if heuristic == 0:  # Copy (ok when training with large vocabularies on en->fr, en->de)
                 new_trans_words.append(UNK_src)
