@@ -25,7 +25,7 @@ from keras_wrapper.dataset import Data_Batch_Generator, Homogeneous_Data_Batch_G
 from keras_wrapper.extra.callbacks import *
 from keras_wrapper.extra.read_write import file2list
 from keras_wrapper.utils import one_hot_2_indices, decode_predictions, decode_predictions_one_hot, \
-    decode_predictions_beam_search, replace_unknown_words, sample, sampling, categorical_probas_to_classes, checkParameters
+    decode_predictions_beam_search, replace_unknown_words, sampling, categorical_probas_to_classes, checkParameters
 
 if int(keras.__version__.split('.')[0]) == 1:
     from keras.layers import Concat as Concatenate
@@ -97,21 +97,31 @@ def saveModel(model_wrapper, update_num, path=None, full_path=False, store_iter=
 
     # Save auxiliary models for optimized search
     if model_wrapper.model_init is not None:
-        # Save model structure
-        logging.info("<<< Saving model_init to " + model_name + "_structure_init.json... >>>")
-        json_string = model_wrapper.model_init.to_json()
-        open(model_name + '_structure_init.json', 'w').write(json_string)
-        # Save model weights
-        model_wrapper.model_init.save_weights(model_name + '_weights_init.h5', overwrite=True)
+        try:  # Try to save model at one time
+            model_wrapper.model_init.save(model_name + '_init.h5')
+        except Exception as e:  # Split saving in model structure / weights
+            logging.info(str(e))
+            # Save model structure
+            logging.info("<<< Saving model_init to " + model_name + "_structure_init.json... >>>")
+            json_string = model_wrapper.model_init.to_json()
+            open(model_name + '_structure_init.json', 'w').write(json_string)
+            # Save model weights
+            model_wrapper.model_init.save_weights(model_name + '_weights_init.h5', overwrite=True)
+
     if model_wrapper.model_next is not None:
-        # Save model structure
-        logging.info("<<< Saving model_next to " + model_name + "_structure_next.json... >>>")
-        json_string = model_wrapper.model_next.to_json()
-        open(model_name + '_structure_next.json', 'w').write(json_string)
-        # Save model weights
-        model_wrapper.model_next.save_weights(model_name + '_weights_next.h5', overwrite=True)
+        try:  # Try to save model at one time
+            model_wrapper.model_next.save(model_name + '_next.h5')
+        except Exception as e:  # Split saving in model structure / weights
+            logging.info(str(e))
+            # Save model structure
+            logging.info("<<< Saving model_next to " + model_name + "_structure_next.json... >>>")
+            json_string = model_wrapper.model_next.to_json()
+            open(model_name + '_structure_next.json', 'w').write(json_string)
+            # Save model weights
+            model_wrapper.model_next.save_weights(model_name + '_weights_next.h5', overwrite=True)
 
     # Save additional information
+    backup_multi_gpu_model = None
     if hasattr(model_wrapper, 'multi_gpu_model'):
         backup_multi_gpu_model = model_wrapper.multi_gpu_model
         setattr(model_wrapper, 'multi_gpu_model', None)
@@ -161,16 +171,22 @@ def loadModel(model_path, update_num, reload_epoch=True, custom_objects=None, fu
         model.load_weights(model_name + '_weights.h5')
 
     # Load auxiliary models for optimized search
-    if os.path.exists(model_name + '_structure_init.json') and os.path.exists(
+    if os.path.exists(model_name + '_init.h5') and os.path.exists(model_name + '_next.h5'):
+        loading_optimized = 1
+    elif os.path.exists(model_name + '_structure_init.json') and os.path.exists(
             model_name + '_weights_init.h5') and os.path.exists(model_name + '_structure_next.json') and os.path.exists(
             model_name + '_weights_next.h5'):
-        loaded_optimized = True
+        loading_optimized = 2
     else:
-        loaded_optimized = False
+        loading_optimized = 0
 
-    if loaded_optimized:
-        # Load model structure
+    if loading_optimized == 1:
         logging.info("<<< Loading optimized model... >>>")
+        model_init = load_model(model_name + '_init.h5', custom_objects=custom_objects, compile=False)
+        model_next = load_model(model_name + '_next.h5', custom_objects=custom_objects, compile=False)
+
+    elif loading_optimized == 2:
+        # Load model structure
         logging.info("\t <<< Loading model_init from " + model_name + "_structure_init.json ... >>>")
         model_init = model_from_json(open(model_name + '_structure_init.json').read(),
                                      custom_objects=custom_objects)
@@ -202,7 +218,7 @@ def loadModel(model_path, update_num, reload_epoch=True, custom_objects=None, fu
     model_wrapper.updateLogger()
 
     model_wrapper.model = model
-    if loaded_optimized:
+    if loading_optimized != 0:
         model_wrapper.model_init = model_init
         model_wrapper.model_next = model_next
         logging.info("<<< Optimized model loaded. >>>")
@@ -237,7 +253,7 @@ def updateModel(model, model_path, update_num, reload_epoch=True, full_path=Fals
     logging.info("<<< Updating model " + model_name + " from " + model_path + " ... >>>")
 
     try:
-        logging.info("<<< Loading model from " + model_path + ".h5 ... >>>")
+        logging.info("<<< Updating model from " + model_path + ".h5 ... >>>")
         model.model.set_weights(load_model(model_path + '.h5', compile=False).get_weights())
 
     except Exception as e:
@@ -248,20 +264,27 @@ def updateModel(model, model_path, update_num, reload_epoch=True, full_path=Fals
         model.model.load_weights(model_path + '_weights.h5')
 
     # Load auxiliary models for optimized search
-    if os.path.exists(model_path + '_weights_init.h5') and os.path.exists(model_path + '_weights_next.h5'):
-        loaded_optimized = True
+    if os.path.exists(model_name + '_init.h5') and os.path.exists(model_name + '_next.h5'):
+        loading_optimized = 1
+    elif os.path.exists(model_name + '_weights_init.h5') and os.path.exists(model_name + '_weights_next.h5'):
+        loading_optimized = 2
     else:
-        loaded_optimized = False
+        loading_optimized = 0
 
-    if loaded_optimized:
-        # Load model structure
+    if loading_optimized != 0:
         logging.info("<<< Updating optimized model... >>>")
-        logging.info("\t <<< Updating model_init from " + model_path + "_structure_init.json ... >>>")
-        model.model_init.load_weights(model_path + '_weights_init.h5')
-        # Load model structure
-        logging.info("\t <<< Updating model_next from " + model_path + "_structure_next.json ... >>>")
-        # Load model weights
-        model.model_next.load_weights(model_path + '_weights_next.h5')
+        if loading_optimized == 1:
+            logging.info("\t <<< Updating model_init from " + model_path + "_init.h5 ... >>>")
+            model.model_init.set_weights(load_model(model_path + '_init.h5', compile=False).get_weights())
+            logging.info("\t <<< Updating model_next from " + model_path + "_next.h5 ... >>>")
+            model.model_next.set_weights(load_model(model_path + '_next.h5', compile=False).get_weights())
+        elif loading_optimized == 2:
+            logging.info("\t <<< Updating model_init from " + model_path + "_structure_init.json ... >>>")
+            model.model_init.load_weights(model_path + '_weights_init.h5')
+            # Load model structure
+            logging.info("\t <<< Updating model_next from " + model_path + "_structure_next.json ... >>>")
+            # Load model weights
+            model.model_next.load_weights(model_path + '_weights_next.h5')
 
     logging.info("<<< Model updated in %0.6s seconds. >>>" % str(time.time() - t))
     return model
@@ -500,7 +523,6 @@ class Model_Wrapper(object):
 
         self.__modes = ['train', 'val', 'test']
 
-
     def set_default_params(self):
         """
         Sets the default params for training, decoding and testing a Model.
@@ -508,111 +530,113 @@ class Model_Wrapper(object):
         :return:
         """
         self.default_training_params = {'n_epochs': 1,
-                          'batch_size': 50,
-                          'maxlen': 100,  # sequence learning parameters (BeamSearch)
-                          'homogeneous_batches': False,
-                          'joint_batches': 4,
-                          'epochs_for_save': 1,
-                          'num_iterations_val': None,
-                          'n_parallel_loaders': 1,
-                          'normalize': True,
-                          'normalization_type': '(-1)-1',
-                          'mean_substraction': False,
-                          'data_augmentation': True,
-                          'wo_da_patch_type': 'whole',  # wo_da_patch_type = 'central_crop' or 'whole'.
-                          'da_patch_type': 'resize_and_rndcrop',
-                          # da_patch_type = 'resize_and_rndcrop', 'rndcrop_and_resize' or 'resizekp_and_rndcrop'.
-                          'da_enhance_list': [],  # da_enhance_list = {brightness, color, sharpness, contrast}
-                          'verbose': 1, 'eval_on_sets': ['val'],
-                          'reload_epoch': 0,
-                          'extra_callbacks': [],
-                          'class_weights': None,
-                          'shuffle': True,
-                          'epoch_offset': 0,
-                          'patience': 0,
-                          'metric_check': None,
-                          'patience_check_split': 'val',
-                          'eval_on_epochs': True,
-                          'each_n_epochs': 1,
-                          'start_eval_on_epoch': 0,  # early stopping parameters
-                          'lr_decay': None,  # LR decay parameters
-                          'initial_lr': 1.,
-                          'reduce_each_epochs': True,
-                          'start_reduction_on_epoch': 0,
-                          'lr_gamma': 0.1,
-                          'lr_reducer_type': 'linear',
-                          'lr_reducer_exp_base': 0.5,
-                          'lr_half_life': 50000,
-                          'lr_warmup_exp': -1.5,
-                          'tensorboard': False,
-                          'n_gpus': 1,
-                          'tensorboard_params': {'log_dir': 'tensorboard_logs',
-                                                 'histogram_freq': 0,
-                                                 'batch_size': 50,
-                                                 'write_graph': True,
-                                                 'write_grads': False,
-                                                 'write_images': False,
-                                                 'embeddings_freq': 0,
-                                                 'embeddings_layer_names': None,
-                                                 'embeddings_metadata': None,
-                                                 }
-                          }
+                                        'batch_size': 50,
+                                        'maxlen': 100,  # sequence learning parameters (BeamSearch)
+                                        'homogeneous_batches': False,
+                                        'joint_batches': 4,
+                                        'epochs_for_save': 1,
+                                        'num_iterations_val': None,
+                                        'n_parallel_loaders': 1,
+                                        'normalize': True,
+                                        'normalization_type': '(-1)-1',
+                                        'mean_substraction': False,
+                                        'data_augmentation': True,
+                                        'wo_da_patch_type': 'whole',  # wo_da_patch_type = 'central_crop' or 'whole'.
+                                        'da_patch_type': 'resize_and_rndcrop',
+                                        'da_enhance_list': [],  # da_enhance_list = {brightness, color, sharpness, contrast}
+                                        'verbose': 1,
+                                        'eval_on_sets': ['val'],
+                                        'reload_epoch': 0,
+                                        'extra_callbacks': [],
+                                        'class_weights': None,
+                                        'shuffle': True,
+                                        'epoch_offset': 0,
+                                        'patience': 0,
+                                        'metric_check': None,
+                                        'patience_check_split': 'val',
+                                        'eval_on_epochs': True,
+                                        'each_n_epochs': 1,
+                                        'start_eval_on_epoch': 0,  # early stopping parameters
+                                        'lr_decay': None,  # LR decay parameters
+                                        'initial_lr': 1.,
+                                        'reduce_each_epochs': True,
+                                        'start_reduction_on_epoch': 0,
+                                        'lr_gamma': 0.1,
+                                        'lr_reducer_type': 'linear',
+                                        'lr_reducer_exp_base': 0.5,
+                                        'lr_half_life': 50000,
+                                        'lr_warmup_exp': -1.5,
+                                        'tensorboard': False,
+                                        'n_gpus': 1,
+                                        'tensorboard_params': {'log_dir': 'tensorboard_logs',
+                                                               'histogram_freq': 0,
+                                                               'batch_size': 50,
+                                                               'write_graph': True,
+                                                               'write_grads': False,
+                                                               'write_images': False,
+                                                               'embeddings_freq': 0,
+                                                               'embeddings_layer_names': None,
+                                                               'embeddings_metadata': None
+                                                               }
+                                        }
         self.defaut_test_params = {'batch_size': 50,
-                          'n_parallel_loaders': 1,
-                          'normalize': True,
-                          'normalization_type': None,
-                          'wo_da_patch_type': 'whole',
-                          'mean_substraction': False}
+                                   'n_parallel_loaders': 1,
+                                   'normalize': True,
+                                   'normalization_type': None,
+                                   'wo_da_patch_type': 'whole',
+                                   'mean_substraction': False
+                                   }
+
         self.default_predict_with_beam_params = {'max_batch_size': 50,
-                          'n_parallel_loaders': 1,
-                          'beam_size': 5,
-                          'beam_batch_size': 50,
-                          'normalize': True,
-                          'normalization_type': None,
-                          'mean_substraction': False,
-                          'predict_on_sets': ['val'],
-                          'maxlen': 20,
-                          'n_samples': -1,
-                          'model_inputs': ['source_text', 'state_below'],
-                          'model_outputs': ['description'],
-                          'dataset_inputs': ['source_text', 'state_below'],
-                          'dataset_outputs': ['description'],
-                          'sampling_type': 'max_likelihood',
-                          'words_so_far': False,
-                          'optimized_search': False,
-                          'search_pruning': False,
-                          'pos_unk': False,
-                          'temporally_linked': False,
-                          'link_index_id': 'link_index',
-                          'state_below_index': -1,
-                          'state_below_maxlen': -1,
-                          'max_eval_samples': None,
-                          'normalize_probs': False,
-                          'alpha_factor': 0.0,
-                          'coverage_penalty': False,
-                          'length_penalty': False,
-                          'length_norm_factor': 0.0,
-                          'coverage_norm_factor': 0.0,
-                          'output_max_length_depending_on_x': False,
-                          'output_max_length_depending_on_x_factor': 3,
-                          'output_min_length_depending_on_x': False,
-                          'output_min_length_depending_on_x_factor': 2,
-                          'attend_on_output': False
-                          }
+                                                 'n_parallel_loaders': 1,
+                                                 'beam_size': 5,
+                                                 'beam_batch_size': 50,
+                                                 'normalize': True,
+                                                 'normalization_type': None,
+                                                 'mean_substraction': False,
+                                                 'predict_on_sets': ['val'],
+                                                 'maxlen': 20,
+                                                 'n_samples': -1,
+                                                 'model_inputs': ['source_text', 'state_below'],
+                                                 'model_outputs': ['description'],
+                                                 'dataset_inputs': ['source_text', 'state_below'],
+                                                 'dataset_outputs': ['description'],
+                                                 'sampling_type': 'max_likelihood',
+                                                 'words_so_far': False,
+                                                 'optimized_search': False,
+                                                 'search_pruning': False,
+                                                 'pos_unk': False,
+                                                 'temporally_linked': False,
+                                                 'link_index_id': 'link_index',
+                                                 'state_below_index': -1,
+                                                 'state_below_maxlen': -1,
+                                                 'max_eval_samples': None,
+                                                 'normalize_probs': False,
+                                                 'alpha_factor': 0.0,
+                                                 'coverage_penalty': False,
+                                                 'length_penalty': False,
+                                                 'length_norm_factor': 0.0,
+                                                 'coverage_norm_factor': 0.0,
+                                                 'output_max_length_depending_on_x': False,
+                                                 'output_max_length_depending_on_x_factor': 3,
+                                                 'output_min_length_depending_on_x': False,
+                                                 'output_min_length_depending_on_x_factor': 2,
+                                                 'attend_on_output': False
+                                                 }
         self.default_predict_params = {'batch_size': 50,
-                          'n_parallel_loaders': 1,
-                          'normalize': True,
-                          'normalization_type': '(-1)-1',
-                          'wo_da_patch_type': 'whole',
-                          'mean_substraction': False,
-                          'n_samples': None,
-                          'init_sample': -1,
-                          'final_sample': -1,
-                          'verbose': 1,
-                          'predict_on_sets': ['val'],
-                          'max_eval_samples': None,
-                          'model_name': 'model',  # name of the attribute where the model for prediction is stored
-                          }
+                                       'n_parallel_loaders': 1,
+                                       'normalize': True,
+                                       'normalization_type': '(-1)-1',
+                                       'wo_da_patch_type': 'whole',
+                                       'mean_substraction': False,
+                                       'n_samples': None,
+                                       'init_sample': -1,
+                                       'final_sample': -1,
+                                       'verbose': 1,
+                                       'predict_on_sets': ['val'],
+                                       'max_eval_samples': None,
+                                       'model_name': 'model',  # name of the attribute where the model for prediction is stored
+                                       }
 
     def setInputsMapping(self, inputsMapping):
         """
@@ -779,7 +803,6 @@ class Model_Wrapper(object):
 
     def setParams(self, params):
         self.params = params
-
 
     # ------------------------------------------------------- #
     #       MODEL MODIFICATION
@@ -1171,17 +1194,17 @@ class Model_Wrapper(object):
 
         # Train model
         model_to_train.fit(x,
-                       y,
-                       batch_size=min(params['batch_size'], len(x[0])),
-                       epochs=params['n_epochs'],
-                       verbose=params['verbose'],
-                       callbacks=callbacks,
-                       validation_data=None,
-                       validation_split=params.get('val_split', 0.),
-                       shuffle=params['shuffle'],
-                       class_weight=class_weight,
-                       sample_weight=sample_weight,
-                       initial_epoch=params['epoch_offset'])
+                           y,
+                           batch_size=min(params['batch_size'], len(x[0])),
+                           epochs=params['n_epochs'],
+                           verbose=params['verbose'],
+                           callbacks=callbacks,
+                           validation_data=None,
+                           validation_split=params.get('val_split', 0.),
+                           shuffle=params['shuffle'],
+                           class_weight=class_weight,
+                           sample_weight=sample_weight,
+                           initial_epoch=params['epoch_offset'])
 
     def testNet(self, ds, parameters, out_name=None):
 
@@ -1656,7 +1679,6 @@ class Model_Wrapper(object):
         logger.warning("Deprecated function, use predictBeamSearchNet() instead.")
         return self.predictBeamSearchNet(ds, parameters)
 
-
     def predictBeamSearchNet(self, ds, parameters=None):
         """
         Approximates by beam search the best predictions of the net on the dataset splits chosen.
@@ -1714,6 +1736,7 @@ class Model_Wrapper(object):
         sources_sampling = []
         for s in params['predict_on_sets']:
             print ("")
+            print("", file=sys.stderr)
             logging.info("<<< Predicting outputs of " + s + " set >>>")
 
             # TODO: enable 'train' sampling on temporally-linked models
@@ -1957,6 +1980,7 @@ class Model_Wrapper(object):
         for s in params['predict_on_sets']:
             predictions[s] = []
             if params['verbose'] > 0:
+                print("", file=sys.stderr)
                 logging.info("<<< Predicting outputs of " + s + " set >>>")
             # Calculate how many iterations are we going to perform
             if params['n_samples'] is None:
@@ -2192,6 +2216,7 @@ class Model_Wrapper(object):
         scores_dict = dict()
 
         for s in params['predict_on_sets']:
+            print("", file=sys.stderr)
             logging.info("<<< Scoring outputs of " + s + " set >>>")
             if len(params['model_inputs']) == 0:
                 raise AssertionError('We need at least one input!')
@@ -2284,18 +2309,6 @@ class Model_Wrapper(object):
     #       DECODING FUNCTIONS
     #           Functions for decoding predictions
     # ------------------------------------------------------- #
-
-    @staticmethod
-    def sample(a, temperature=1.0):
-        """
-        Helper function to sample an index from a probability array
-        :param a: Probability array
-        :param temperature: The higher, the flatter probabilities. Hence more random outputs.
-        :return:
-        """
-
-        logger.warning("Deprecated function, use utils.sample() instead.")
-        return sample(a, temperature=temperature)
 
     @staticmethod
     def sampling(scores, sampling_type='max_likelihood', temperature=1.0):
@@ -2627,6 +2640,7 @@ class Model_Wrapper(object):
         plot_file = self.model_path + '/' + time_measure + '_' + str(max_iter) + '.jpg'
         plt.savefig(plot_file)
         if not self.silence:
+            print("", file=sys.stderr)
             logging.info("<<< Progress plot saved in " + plot_file + ' >>>')
 
         # Close plot window
