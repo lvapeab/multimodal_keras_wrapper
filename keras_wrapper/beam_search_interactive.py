@@ -387,10 +387,8 @@ class BeamSearchEnsemble:
 
                     if params['length_penalty'] or params['coverage_penalty']:
                         if params['length_penalty']:
-                            length_penalties = [((5 + len(sample)) ** params['length_norm_factor']
-                                                 / (5 + 1) ** params['length_norm_factor'])
-                                                # this 5 is a magic number by Google...
-                                                for sample in samples]
+                            length_penalties = [((5 + len(sample)) ** params['length_norm_factor'] /
+                                                 (5 + 1) ** params['length_norm_factor']) for sample in samples]
                         else:
                             length_penalties = [1.0 for _ in len(samples)]
 
@@ -511,9 +509,7 @@ class BeamSearchEnsemble:
 
         if params['length_penalty'] or params['coverage_penalty']:
             if params['length_penalty']:
-                length_penalties = [((5 + len(sample)) ** params['length_norm_factor']
-                                     / (5 + 1) ** params['length_norm_factor'])  # this 5 is a magic number by Google...
-                                    for sample in samples]
+                length_penalties = [((5 + len(sample)) ** params['length_norm_factor'] / (5 + 1) ** params['length_norm_factor']) for sample in samples]
             else:
                 length_penalties = [1.0 for _ in len(samples)]
 
@@ -1164,9 +1160,7 @@ class InteractiveBeamSearchSampler:
                         # logger.log(3, "Treating case 2: The segment is overlapped with the hypothesis")
                         assert overlapping_position > -1, 'Error detecting overlapped position!'
                         for beam_index in range(len(forward_hyp_trans[best_n_words_index])):
-                            if any(map(lambda x: x == forward_hyp_trans[best_n_words_index][beam_index][
-                                                      overlapping_position:],
-                                       isle_prefixes)):
+                            if any(map(lambda x: x == forward_hyp_trans[best_n_words_index][beam_index][overlapping_position:], isle_prefixes)):
                                 # Compatible with best hypothesis
                                 hyp_samples.append(forward_hyp_trans[best_n_words_index][beam_index])
                                 hyp_scores.append(forward_hyp_scores[best_n_words_index][beam_index])
@@ -1292,9 +1286,8 @@ class InteractiveBeamSearchSampler:
                                                                idx2word=idx2word)
         if params['length_penalty'] or params['coverage_penalty']:
             if params['length_penalty']:
-                length_penalties = [((5 + len(sample)) ** params['length_norm_factor']
-                                     / (5 + 1) ** params['length_norm_factor'])  # this 5 is a magic number by Google...
-                                    for sample in samples]
+                length_penalties = [((5 + len(sample)) ** params['length_norm_factor'] /
+                                     (5 + 1) ** params['length_norm_factor']) for sample in samples]
             else:
                 length_penalties = [1.0 for _ in len(samples)]
 

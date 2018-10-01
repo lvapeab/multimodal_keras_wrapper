@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
 from __future__ import print_function
+
 import copy
 import logging
 
@@ -10,7 +11,8 @@ from keras_wrapper.extra.read_write import list2file
 from keras_wrapper.utils import indices_2_one_hot, decode_predictions_beam_search, one_hot_2_indices
 
 
-def equalize_sentences(y, h, same_length=True, y_as_one_hot=True, h_as_one_hot=True, vocabulary_len_y=None, vocabulary_len_h=None,
+def equalize_sentences(y, h, same_length=True, y_as_one_hot=True, h_as_one_hot=True, vocabulary_len_y=None,
+                       vocabulary_len_h=None,
                        compute_masks=True, fixed_length=-1, return_states_below=True, null_idx=2):
     """
     Equalizes (max length) the sentences y and h.
@@ -105,8 +107,7 @@ class OnlineTrainer:
         self.sampler = sampler
         self.verbose = verbose
         self.params_prediction = self.checkParameters(params_prediction) if params_prediction is not None else {}
-        self.params_training = self.checkParameters(params_training, params_training=True) if params_training \
-                                                                                              is not None else None
+        self.params_training = self.checkParameters(params_training, params_training=True) if params_training is not None else None
         self.sentence_scorer = None
         target_vocabulary_id = params_prediction['dataset_outputs'][
             0] if params_prediction is not None else 'target_text'
@@ -142,7 +143,7 @@ class OnlineTrainer:
 
         # If necessary, set reference in scorer
         if self.params_prediction.get('optimizer_regularizer').lower() == 'bleu' or \
-                        self.params_prediction.get('optimizer_regularizer').lower() == 'ter':
+                self.params_prediction.get('optimizer_regularizer').lower() == 'ter':
             self.sentence_scorer.set_reference(str(trg_words[0]).split())
 
         # 1. Translate source sentence with the current model. Get a single hypothesis or the N-best list
@@ -187,8 +188,8 @@ class OnlineTrainer:
         # If we are working with an n-best list, we'll probably have to decode it
         if self.params_prediction['n_best_optimizer']:
             if self.verbose > 0:
-                print ("")
-                print (u"\tReference: ", trg_words[0].encode('utf-8'))
+                print("")
+                print(u"\tReference: ", trg_words[0].encode('utf-8'))
 
             # Get max length of the hypotheses in the N-best list, for a future mini-batch training.
             maxlen_nbest_hypothesis = y.shape[1] + 1
@@ -205,7 +206,7 @@ class OnlineTrainer:
                     pred = decode_predictions_beam_search([n_best_pred],
                                                           self.index2word_y,
                                                           alphas=n_best_alpha,
-                                                          x_text=n_best_sources ,
+                                                          x_text=n_best_sources,
                                                           heuristic=heuristic,
                                                           mapping=self.mapping,
                                                           pad_sequences=True,
@@ -254,17 +255,18 @@ class OnlineTrainer:
                             pass
                         else:
                             if self.verbose:
-                                print (u"Mismatch in positions %d and %d. The %d-th hypothesis should be the %d" % \
-                                      (i, j, permutation_index_low, permutation_index_high))
-                                print (u"top-prob h:", n_best_predictions[permutation_index_high][2][0].encode('utf-8'), \
-                                    self.params_prediction.get('optimizer_regularizer') + ":", \
-                                    n_best_predictions[permutation_index_high][3])
-                                print (u"top_metric_h", n_best_predictions[permutation_index_low][2][0].encode('utf-8'), \
-                                    self.params_prediction.get('optimizer_regularizer') + ":", \
-                                    n_best_predictions[permutation_index_low][3])
+                                print(u"Mismatch in positions %d and %d. The %d-th hypothesis should be the %d" % (i, j, permutation_index_low, permutation_index_high))
+                                print(u"top-prob h:",
+                                      n_best_predictions[permutation_index_high][2][0].encode('utf-8'),
+                                      self.params_prediction.get('optimizer_regularizer') + ":", n_best_predictions[permutation_index_high][3])
+                                print(u"top_metric_h",
+                                      n_best_predictions[permutation_index_low][2][0].encode('utf-8'),
+                                      self.params_prediction.get('optimizer_regularizer') + ":",
+                                      n_best_predictions[permutation_index_low][3])
 
                             # Log diff loss: p(h_i|x) - p(h_j|x) -> We need to compute 2 logprobs
-                            if 'log_diff' in self.params_training.get('loss').keys()[0] or 'kl_diff' in self.params_training.get('loss').keys()[0] :
+                            if 'log_diff' in self.params_training.get('loss').keys()[0] or 'kl_diff' in \
+                                    self.params_training.get('loss').keys()[0]:
                                 # Tensors for computing p(h_i|x)
                                 top_metric_h = np.zeros(maxlen_nbest_hypothesis, dtype='int64')
                                 unnormalized_top_metric_h = np.asarray(n_best_predictions[permutation_index_low][1])
@@ -288,8 +290,7 @@ class OnlineTrainer:
                                 top_prob_h = np.array([indices_2_one_hot(top_prob_h,
                                                                          self.dataset.vocabulary_len["target_text"])])
                                 # Build model inputs
-                                if 'log_diff_plus_categorical_crossentropy' in self.params_training.get('loss').keys()[
-                                    0]:
+                                if 'log_diff_plus_categorical_crossentropy' in self.params_training.get('loss').keys()[0]:
                                     current_permutation_train_inputs = [x, state_below_y,
                                                                         np.asarray([state_below_top_metric_h]),
                                                                         np.asarray([state_below_top_prob_h]),
@@ -322,8 +323,7 @@ class OnlineTrainer:
                                     unnormalized_state_below_top_prob_h
                                 top_prob_h = np.array([indices_2_one_hot(top_prob_h,
                                                                          self.dataset.vocabulary_len["target_text"])])
-                                sign = np.array([self.params_training['additional_training_settings'].get('tau', 1)
-                                                 * n_best_predictions[permutation_index_low][3]])
+                                sign = np.array([self.params_training['additional_training_settings'].get('tau', 1) * n_best_predictions[permutation_index_low][3]])
                                 current_permutation_train_inputs = [x, state_below_top_prob_h, top_prob_h, sign]
                                 current_permutation_train_outputs = []
 
@@ -336,7 +336,9 @@ class OnlineTrainer:
                                     train_inputs = [x, state_below_top_prob_h, top_prob_h, sign]
                                 train_outputs = np.zeros((train_inputs[0].shape[0], 1), dtype='float32')
                             else:
-                                raise NotImplementedError('The loss function " %s " is still unimplemented.' % self.params_training.get('loss'))
+                                raise NotImplementedError(
+                                    'The loss function " %s " is still unimplemented.' % self.params_training.get(
+                                        'loss'))
             # Update the models
             for model in self.models:
                 # We are always working with Model from Keras
@@ -380,15 +382,15 @@ class OnlineTrainer:
                     # With custom losses, we'll probably use the hypothesis as training sample -> Convert to one-hot
                     # Tensors for computing p(h_i|x)
 
-                    if 'kl_diff' in self.params_training.get('loss') or 'weighted_log_diff' in self.params_training.get('loss'):
-
+                    if 'kl_diff' in self.params_training.get('loss') or 'weighted_log_diff' in self.params_training.get(
+                            'loss'):
                         y, hyp, state_below_y, state_below_h, mask_y, mask_h = equalize_sentences(y[0], trans_indices,
-                                                                                  same_length=True,
-                                                                                  y_as_one_hot=True,
-                                                                                  h_as_one_hot=True,
-                                                                                  vocabulary_len_y=self.dataset.vocabulary_len["target_text"],
-                                                                                  vocabulary_len_h=self.dataset.vocabulary_len["target_text"],
-                                                                                  compute_masks=True)
+                                                                                                  same_length=True,
+                                                                                                  y_as_one_hot=True,
+                                                                                                  h_as_one_hot=True,
+                                                                                                  vocabulary_len_y=self.dataset.vocabulary_len["target_text"],
+                                                                                                  vocabulary_len_h=self.dataset.vocabulary_len["target_text"],
+                                                                                                  compute_masks=True)
                         # Make batches of size 1
                         y = np.asarray([y], dtype=y.dtype)
                         hyp = np.asarray([hyp], dtype=hyp.dtype)
@@ -397,17 +399,18 @@ class OnlineTrainer:
                         mask_y = np.asarray([mask_y], dtype=state_below_y.dtype)
                         mask_h = np.asarray([mask_h], dtype=state_below_h.dtype)
 
-
                     # Build model inputs according to those required for each loss function
-                    if 'log_diff' in self.params_training.get('loss') or 'kl_diff' in self.params_training.get('loss') :
+                    if 'log_diff' in self.params_training.get('loss') or 'kl_diff' in self.params_training.get('loss'):
                         train_inputs = [x, state_below_y, state_below_h] + [y, hyp]
                     elif 'log_diff_plus_categorical_crossentropy' in self.params_training.get('loss').keys()[0]:
                         train_inputs = [x, state_below_y, state_below_y, state_below_h,
-                                        np.asarray([self.params_training['additional_training_settings'].get('lambda', 0.5)])]  +\
+                                        np.asarray([self.params_training['additional_training_settings'].get('lambda',
+                                                                                                             0.5)])] + \
                                        [y, y, hyp]
                     elif 'weighted_log_diff' in self.params_training.get('loss').keys()[0]:
                         train_inputs = [x, state_below_y, state_below_h,
-                                        np.asarray([self.params_training['additional_training_settings'].get('lambda', 0.5)])] + \
+                                        np.asarray([self.params_training['additional_training_settings'].get('lambda',
+                                                                                                             0.5)])] + \
                                        [y, hyp, mask_y, mask_h]
 
                     elif 'hybrid_log_diff' in self.params_training.get('loss').keys()[0]:
@@ -415,8 +418,10 @@ class OnlineTrainer:
                                         np.asarray([1.]), np.asarray([0.]), np.asarray([0.])]
                         p_t_y = model.predict(train_inputs, batch_size=1, verbose=0)
                         train_inputs = [x, state_below_y, state_below_h, y, hyp,
-                                        np.asarray([self.params_training['additional_training_settings'].get('d', 0.5)]),
-                                        np.asarray([self.params_training['additional_training_settings'].get('c', 0.5)]),
+                                        np.asarray(
+                                            [self.params_training['additional_training_settings'].get('d', 0.5)]),
+                                        np.asarray(
+                                            [self.params_training['additional_training_settings'].get('c', 0.5)]),
                                         p_t_y]
 
                     elif 'categorical_crossentropy2' in self.params_training.get('loss').keys()[0]:
@@ -454,7 +459,7 @@ class OnlineTrainer:
                             self.n_updates += loss
                     # We are optimizing towards an MT metric (BLEU or TER)
                     if self.params_prediction.get('optimizer_regularizer').lower() == 'bleu' or \
-                                    self.params_prediction.get('optimizer_regularizer').lower() == 'ter':
+                            self.params_prediction.get('optimizer_regularizer').lower() == 'ter':
                         # Get score of the hypothesis (after post-processing)
                         hypothesis_to_score = hypothesis_to_write.split()
                         if self.sentence_scorer is not None:
@@ -502,7 +507,7 @@ class OnlineTrainer:
                     # Classical setup: We can train the TranslationModel directly
                     # We can include MT metrics as a LR modifier
                     if self.params_prediction.get('optimizer_regularizer').lower() == 'bleu' or \
-                                    self.params_prediction.get('optimizer_regularizer').lower() == 'ter':
+                            self.params_prediction.get('optimizer_regularizer').lower() == 'ter':
                         # Get score of the hypothesis (after post-processing)
                         hypothesis_to_score = hypothesis_to_write.split()
                         if self.sentence_scorer is not None:
@@ -546,14 +551,16 @@ class OnlineTrainer:
         mask = Y[1]
 
         if self.params_training.get('use_custom_loss', False):
-            raise NotImplementedError('Custom loss + train_online (interactive) is still unimplemented. Refer to sample_and_train_online')
+            raise NotImplementedError(
+                'Custom loss + train_online (interactive) is still unimplemented. Refer to sample_and_train_online')
             state_below_h = np.asarray([np.append(self.dataset.extra_words['<null>'], trans_indices[:-1])])
             hyp = np.array([indices_2_one_hot(trans_indices, self.dataset.vocabulary_len["target_text"])])
         if self.params_prediction.get('n_best_optimizer', False):
-            raise BaseException ('N-best optimizer + train_online (interactive) is still unimplemented. Refer to sample_and_train_online')
+            raise BaseException(
+                'N-best optimizer + train_online (interactive) is still unimplemented. Refer to sample_and_train_online')
             if self.verbose > 0:
-                print ("")
-                print ("\tReference: ", trg_words[0])
+                print("")
+                print("\tReference: ", trg_words[0])
             for n_best_preds, n_best_scores, n_best_alphas in n_best:
                 n_best_predictions = []
                 for i, (n_best_pred, n_best_score, n_best_alpha) in enumerate(zip(n_best_preds,
@@ -585,13 +592,15 @@ class OnlineTrainer:
                 p = np.argsort([nbest[3] for nbest in n_best_predictions])
                 if p[0] == 0:
                     if self.verbose > 0:
-                        print (u"The top-prob hypothesis and the top bleu hypothesis match")
+                        print(u"The top-prob hypothesis and the top bleu hypothesis match")
                 else:
                     if self.verbose:
-                        print (u"The top-prob hypothesis and the top bleu hypothesis don't match")
-                        print (u"top-prob h:", n_best_predictions[0][2][0].encode('utf-8'), "Bleu:", 1 - n_best_predictions[0][-1])
-                        print (u"top_bleu_h", n_best_predictions[p[0]][2][0].encode('utf-8'), "Bleu:", 1 - n_best_predictions[p[0]][-1])
-                        print (u"Updating...")
+                        print(u"The top-prob hypothesis and the top bleu hypothesis don't match")
+                        print(u"top-prob h:", n_best_predictions[0][2][0].encode('utf-8'), "Bleu:",
+                              1 - n_best_predictions[0][-1])
+                        print(u"top_bleu_h", n_best_predictions[p[0]][2][0].encode('utf-8'), "Bleu:",
+                              1 - n_best_predictions[p[0]][-1])
+                        print(u"Updating...")
 
                     top_bleu_h = np.asarray(n_best_predictions[p[0]][1])
                     state_below_top_prob_h = np.asarray([np.append(self.dataset.extra_words['<null>'],
@@ -624,7 +633,8 @@ class OnlineTrainer:
             # 3. Update net parameters with the corrected samples
             for model in self.models:
                 if self.params_training.get('use_custom_loss', False):
-                    raise NotImplementedError('Custom loss optimizers + train_online (interactive) still unimplemented. Refer to sample_and_train_online')
+                    raise NotImplementedError(
+                        'Custom loss optimizers + train_online (interactive) still unimplemented. Refer to sample_and_train_online')
 
                     weights = model.trainable_weights
                     # weights.sort(key=lambda x: x.name if x.name else x.auto_name)

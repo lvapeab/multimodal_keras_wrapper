@@ -55,7 +55,7 @@ def common_prefix(s1, s2):
     for i in range(min(len(s1), len(s2))):
         if s1[i] != s2[i]:
             return i, s1[:i]
-    return i + 1, s1[:i+1]
+    return i + 1, s1[:i + 1]
 
 
 def longest_common_suffix(list1, list2):
@@ -73,6 +73,7 @@ def longest_common_suffix(list1, list2):
         if list2[-len(suffix):] == suffix:
             return suffix, -len(suffix)
     return [], 0
+
 
 def find_isles(s1, s2, x=0, y=0):
     """
@@ -153,7 +154,6 @@ def compute_mouse_movements(isles, prev_isles, last_checked_index):
 
 
 def test_utils():
-
     s1 = 'Guia de Servicios de exploracion de red de CentreWare xi'
     s2 = 'Guia de instalaci\xc3\xb3n de Servicios de exploracion de red de CentreWare xi'
 
