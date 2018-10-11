@@ -28,7 +28,7 @@ def checkParameters(input_params, default_params, hard_check=False):
         if key in valid_params:
             params[key] = val
         elif hard_check:
-            raise Exception("Parameter '" + key + "' is not a valid parameter.")
+            raise ValueError("Parameter '" + key + "' is not a valid parameter.")
 
     # Use default parameters if not provided
     for key, default_val in iteritems(default_params):
@@ -648,7 +648,7 @@ def simplifyDataset(ds, id_classes, n_classes=50):
                     sample = y_split[id_out][i]
                     try:
                         kept_Y[id_out].append(sample)
-                    except:
+                    except Exception:
                         kept_Y[id_out] = []
                         kept_Y[id_out].append(sample)
                 for id_in in ds.ids_inputs:
@@ -657,7 +657,7 @@ def simplifyDataset(ds, id_classes, n_classes=50):
                     sample = x_split[id_in][i]
                     try:
                         kept_X[id_in].append(sample)
-                    except:
+                    except Exception:
                         kept_X[id_in] = []
                         kept_X[id_in].append(sample)
         # exec ('ds.X_' + s + ' = copy.copy(kept_X)')
@@ -936,7 +936,7 @@ def replace_unknown_words(src_word_seq, trg_word_seq, hard_alignment, unk_symbol
     for j in range(len(trans_words)):
         if trans_words[j] == unk_symbol:
             UNK_src = src_word_seq[hard_alignment[j]]
-            if isinstance(UNK_src, str):
+            if isinstance(UNK_src, str) and sys.version_info.major == 2:
                 UNK_src = UNK_src.decode('utf-8')
             if heuristic == 0:  # Copy (ok when training with large vocabularies on en->fr, en->de)
                 new_trans_words.append(UNK_src)
@@ -1016,18 +1016,6 @@ def decode_predictions_beam_search(preds, index2word, alphas=None, heuristic=0,
     return answer_pred
 
 
-def sample(a, temperature=1.0):
-    """
-    Helper function to sample an index from a probability array
-    :param a: Probability array
-    :param temperature: The higher, the flatter probabilities. Hence more random outputs.
-    :return:
-    """
-    a = np.log(a) / temperature
-    a = np.exp(a) / np.sum(np.exp(a))
-    return np.argmax(np.random.multinomial(1, a, 1))
-
-
 def sampling(scores, sampling_type='max_likelihood', temperature=1.0):
     """
     Sampling words (each sample is drawn from a categorical distribution).
@@ -1078,6 +1066,11 @@ def flatten(l):
 def key_with_max_val(d):
     """ a) create a list of the dict's keys and values;
         b) return the key with the max value"""
+
+    d = dict((k, v) for k, v in iteritems(d) if isinstance(v, (int, float, complex)))
     v = list(d.values())
     k = list(d.keys())
-    return k[v.index(max(v))]
+    if d == {}:
+        return -1
+    else:
+        return k[v.index(max(v))]

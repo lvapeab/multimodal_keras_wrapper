@@ -54,7 +54,7 @@ def get_coco_score(pred_list, verbose, extra_vars, split):
         (Cider(), "CIDEr")
     ]
     if extra_vars.get('language', 'en') in accepted_langs:
-        scorers.append((Meteor(language=extra_vars['language']), "METEOR"))
+        scorers.append((Meteor(language=extra_vars.get('language', 'en')), "METEOR"))
 
     final_scores = {}
     for scorer, method in scorers:
@@ -233,7 +233,7 @@ def multiclass_metrics(pred_list, verbose, extra_vars, split):
         y_pred[i_s, pred_class] = 1
     try:
         values_gt = list(gt_list.values())
-    except:
+    except AttributeError:
         values_gt = gt_list
 
     counts_per_class = np.zeros((n_classes,))
@@ -378,7 +378,7 @@ def semantic_segmentation_meaniou(pred_list, verbose, extra_vars, split):
     y_pred = np.zeros((n_samples,))
 
     ind_i = 0
-    for i_s, (gt_class, pred_class) in list(enumerate(zip(values_gt, pred_class_list))):
+    for _, (gt_class, pred_class) in list(enumerate(zip(values_gt, pred_class_list))):
         if not any([d == gt_class for d in discard_classes]):
             y_gt[ind_i] = gt_class
             y_pred[ind_i] = pred_class
@@ -547,15 +547,13 @@ def averagePrecision(pred_list, verbose, extra_vars, split):
     rec = [general_measures[thres][1] for thres in range(n_thresholds)][::-1]
     AP = _computeAP(prec, rec)
 
-    """
-    for thres in range(n_thresholds):
-        logging.info(
-            'Evaluation results (score >= %0.2f):\n\tPrecision: %f\n\tRecall: %f\n
-            \tAccuracy: %f\n\tSamples GT: %d\n\tSamples predicted: %d' %
-            (thresholds[thres],
-             general_measures[thres][0], general_measures[thres][1], general_measures[thres][2],
-             general_measures[thres][3], general_measures[thres][4]))
-    """
+    # for thres in range(n_thresholds):
+    #     logging.info(
+    #         'Evaluation results (score >= %0.2f):\n\tPrecision: %f\n\tRecall: %f\n
+    #         \tAccuracy: %f\n\tSamples GT: %d\n\tSamples predicted: %d' %
+    #         (thresholds[thres],
+    #          general_measures[thres][0], general_measures[thres][1], general_measures[thres][2],
+    #          general_measures[thres][3], general_measures[thres][4]))
 
     if verbose > 0:
         logging.info('Average Precision (AP): %f' % AP)
@@ -714,7 +712,7 @@ def compute_perplexity(y_pred, y_true, verbose, split, mask=None):
 
     if mask is not None:
         y_pred /= np.sum(y_pred, axis=-1, keepdims=True)
-        mask = np.reshape(mask, y_true.shape[:-1])[:, :, None]
+        mask = np.reshape(np.asarray(mask), np.asarray(y_true).shape[:-1])[:, :, None]
         truth_mask = (y_true * mask).flatten().nonzero()[0]
         predictions = y_pred.flatten()[truth_mask]
         ppl = np.power(2, np.mean(-np.log2(predictions)))

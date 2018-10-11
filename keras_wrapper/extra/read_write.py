@@ -17,7 +17,6 @@ import codecs
 import numpy as np
 import tables
 import sys
-from io import BytesIO     # for handling byte strings
 
 if sys.version_info.major == 3:
     import _pickle as pk
@@ -29,7 +28,11 @@ else:
 # Helpers
 
 
-def _dirac(pred, gt):
+def encode_list(mylist):
+    return [l.decode('utf-8') if isinstance(l, str) else unicode(l) for l in mylist] if sys.version_info.major == 2 else [str(l) for l in mylist]
+
+
+def dirac(pred, gt):
     return int(pred == gt)
 
 
@@ -61,17 +64,14 @@ def clean_dir(directory):
         os.makedirs(directory)
 
 
-###
 # Main functions
-###
 def file2list(filepath, stripfile=True):
     with codecs.open(filepath, 'r', encoding='utf-8') as f:
-        lines = [k for k in [k.strip() for k in f.readlines()] if len(k) > 0] if stripfile else [k for k in
-                                                                                                 f.readlines()]
+        lines = [k for k in [k.strip() for k in f.readlines()] if len(k) > 0] if stripfile else [k for k in f.readlines()]
         return lines
 
 
-def numpy2hdf5(filepath, mylist, data_name='data', permission='wb'):
+def numpy2hdf5(filepath, mylist, data_name='data', permission='w'):
     if 'w' in permission:
         f = tables.open_file(filepath, mode=permission)
         atom = tables.Float32Atom()
@@ -99,7 +99,7 @@ def numpy2file(filepath, mylist, permission='wb', split=False):
 def numpy2imgs(folder_path, mylist, imgs_names, dataset):
     from PIL import Image as pilimage
     create_dir_if_not_exists(folder_path)
-    n_samples, _, n_classes = mylist.shape
+    n_classes = mylist.shape[-1]
 
     for img, name in zip(mylist, imgs_names):
         name = '_'.join(name.split('/'))
@@ -112,33 +112,30 @@ def numpy2imgs(folder_path, mylist, imgs_names, dataset):
         out_img.save(file_path)
 
 
-def listoflists2file(filepath, mylist, permission='wb'):
-    mylist = [unicode_fn(sublist) for sublist in mylist]
-    mylist = '\n'.join(mylist)
-    if isinstance(mylist[0], unicode_fn):
-        mylist = mylist.encode('utf-8')
-    mylist = BytesIO(mylist)
-    with open(filepath, permission) as f:
-        f.writelines(mylist)
-
-
-def list2file(filepath, mylist, permission='wb'):
-    mylist = [unicode_fn(l) for l in mylist]
+def listoflists2file(filepath, mylist, permission='w'):
+    mylist = [encode_list(sublist) for sublist in mylist]
+    mylist = [item for sublist in mylist for item in sublist]
     mylist = u'\n'.join(mylist)
-    if isinstance(mylist[0], unicode_fn):
-        mylist = mylist.encode('utf-8')
-    mylist = BytesIO(mylist)
-    with open(filepath, permission) as f:
-        f.writelines(mylist)
+    with codecs.open(filepath, permission, encoding='utf-8') as f:
+        f.write(mylist)
+        f.write('\n')
+
+
+def list2file(filepath, mylist, permission='w'):
+    mylist = encode_list(mylist)
+    mylist = u'\n'.join(mylist)
+    with codecs.open(filepath, permission, encoding='utf-8') as f:
+        f.write(mylist)
+        f.write('\n')
 
 
 def list2stdout(mylist):
-    mylist = [unicode_fn(l) for l in mylist]
+    mylist = encode_list(mylist)
     mylist = '\n'.join(mylist)
     print (mylist)
 
 
-def nbest2file(filepath, mylist, separator=u'|||', permission='wb'):
+def nbest2file(filepath, mylist, separator=u'|||', permission='w'):
     newlist = []
     for l in mylist:
         for l2 in l:
@@ -146,18 +143,23 @@ def nbest2file(filepath, mylist, separator=u'|||', permission='wb'):
             for l3 in l2:
                 if isinstance(l3, list):
                     l3 = l3[0]
-                a.append(unicode_fn(l3) + ' ' + separator)
+                if sys.version_info.major == 2:
+                    if isinstance(l3, str):
+                        a.append(l3.decode('utf-8') + u' ' + separator)
+                    else:
+                        a.append(unicode(l3) + u' ' + separator)
+                else:
+                    a.append(str(l3) + ' ' + separator)
             a = ' '.join(a + [' '])
             newlist.append(a.strip()[:-len(separator)].strip())
     mylist = '\n'.join(newlist)
-    if isinstance(mylist[0], unicode_fn):
+    if isinstance(mylist[0], str) and sys.version_info.major == 2:
         mylist = mylist.encode('utf-8')
-    mylist = BytesIO(mylist)
-    with open(filepath, permission) as f:
-        f.writelines(mylist)
+    with codecs.open(filepath, permission, encoding='utf-8') as f:
+        f.write(mylist)
 
 
-def list2vqa(filepath, mylist, qids, permission='wb', extra=None):
+def list2vqa(filepath, mylist, qids, permission='w', extra=None):
     res = []
     for i, (ans, qst) in list(enumerate(zip(mylist, qids))):
         line = {'answer': ans, 'question_id': int(qst)}
@@ -167,13 +169,13 @@ def list2vqa(filepath, mylist, qids, permission='wb', extra=None):
                 [[extra['vocab'][p], extra['probs'][i][p]] for p in np.argsort(extra['probs'][i])[::-1][:5]])
             line['max_prob'] = str(max(extra['probs'][i]))
         res.append(line)
-    with open(filepath, permission) as f:
+    with codecs.open(filepath, permission, encoding='utf-8') as f:
         json.dump(res, f)
 
 
 def dump_hdf5_simple(filepath, dataset_name, data):
     import h5py
-    h5f = h5py.File(filepath, 'wb')
+    h5f = h5py.File(filepath, 'w')
     h5f.create_dataset(dataset_name, data=data)
     h5f.close()
 
@@ -186,17 +188,11 @@ def load_hdf5_simple(filepath, dataset_name='data'):
     return tmp
 
 
-def pickle_model(
-        path,
-        model,
-        word2index_x,
-        word2index_y,
-        index2word_x,
-        index2word_y):
+def pickle_model(path, model, word2index_x, word2index_y, index2word_x, index2word_y):
     modifier = 10
     tmp = sys.getrecursionlimit()
     sys.setrecursionlimit(tmp * modifier)
-    with open(path, 'wb') as f:
+    with open(path, 'w') as f:
         p_dict = {'model': model,
                   'word2index_x': word2index_x,
                   'word2index_y': word2index_y,
@@ -207,7 +203,7 @@ def pickle_model(
 
 
 def unpickle_model(path):
-    with open(path, 'rb') as f:
+    with open(path, 'r') as f:
         if sys.version_info.major == 3:
             model = pk.load(f, encoding='latin1')['model']
         else:
@@ -217,7 +213,7 @@ def unpickle_model(path):
 
 def unpickle_vocabulary(path):
     p_dict = {}
-    with open(path, 'rb') as f:
+    with open(path, 'r') as f:
         if sys.version_info.major == 3:
             pickle_load = pk.load(f, encoding='latin1')
         else:
@@ -230,7 +226,7 @@ def unpickle_vocabulary(path):
 
 
 def unpickle_data_provider(path):
-    with open(path, 'rb') as f:
+    with open(path, 'r') as f:
         if sys.version_info.major == 3:
             dp = pk.load(f, encoding='latin1')['data_provider']
         else:
@@ -243,7 +239,7 @@ def model_to_json(path, model):
     Saves model as a json file under the path.
     """
     json_model = model.to_json()
-    with open(path, 'wb') as f:
+    with open(path, 'w') as f:
         json.dump(json_model, f)
 
 
@@ -272,8 +268,7 @@ def text_to_model(filepath):
     pass
 
 
-def print_qa(questions, answers_gt, answers_gt_original, answers_pred,
-             era, similarity=_dirac, path=''):
+def print_qa(questions, answers_gt, answers_gt_original, answers_pred, era, similarity=dirac, path=''):
     """
     In:
         questions - list of questions
@@ -299,7 +294,7 @@ def print_qa(questions, answers_gt, answers_gt_original, answers_pred,
         a_gt = answers_gt[k]
         a_gt_original = answers_gt_original[k]
         a_p = answers_pred[k]
-        score += _dirac(a_p, a_gt_original)
+        score += dirac(a_p, a_gt_original)
         if isinstance(q[0], unicode_fn):
             tmp = unicode_fn('question: {0}\nanswer: {1}\nanswer_original: {2}\nprediction: {3}\n')
         else:
@@ -314,22 +309,22 @@ def print_qa(questions, answers_gt, answers_gt_original, answers_pred,
     return score
 
 
-def dict2file(mydict, path, title=None, separator=':'):
+def dict2file(mydict, path, title=None, separator=':', permission='a'):
     """
     In:
         mydict - dictionary to save in a file
-        path - path where acc_dict is stored
+        path - path where mydict is stored
         title - the first sentence in the file;
             useful if we write many dictionaries
             into the same file
     """
-    tmp = [unicode_fn(x[0]) + separator + unicode_fn(x[1]) for x in list(iteritems(mydict))]
+    tmp = [encode_list([x[0]])[0] + separator + encode_list([x[1]])[0] for x in list(iteritems(mydict))]
     if title is not None:
         output_list = [title]
         output_list.extend(tmp)
     else:
         output_list = tmp
-    list2file(path, output_list, 'ab')
+    list2file(path, output_list, permission=permission)
 
 
 def dict2pkl(mydict, path):
