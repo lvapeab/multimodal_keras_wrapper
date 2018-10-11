@@ -6,6 +6,7 @@ import math
 import sys
 import time
 import numpy as np
+import cupy as cp
 
 from keras_wrapper.dataset import Data_Batch_Generator
 from keras_wrapper.utils import one_hot_2_indices, checkParameters
@@ -65,13 +66,13 @@ class BeamSearchEnsemble:
         probs = sum(probs_list[i] * self.model_weights[i] for i in range(len(models)))
 
         if self.return_alphas:
-            alphas = np.asarray(sum(alphas_list[i] for i in range(len(models))))
+            alphas = cp.asarray(sum(alphas_list[i] for i in range(len(models))))
         else:
             alphas = None
         if self.optimized_search:
-            return probs, prev_outs_list, alphas
+            return cp.asarray(probs, dtype='float32'), prev_outs_list, alphas
         else:
-            return probs
+            return cp.asarray(probs, dtype='float32')
 
     def beam_search(self, X, params, eos_sym=0, null_sym=2):
         """
@@ -112,7 +113,7 @@ class BeamSearchEnsemble:
         dead_k = 0  # samples that reached eos
         live_k = 1  # samples that did not yet reached eos
         hyp_samples = [[]] * live_k
-        hyp_scores = np.zeros(live_k).astype('float32')
+        hyp_scores = cp.zeros(live_k).astype('float32')
         if self.return_alphas:
             sample_alphas = []
             hyp_alphas = [[]] * live_k
@@ -149,14 +150,14 @@ class BeamSearchEnsemble:
                                                                prev_outs=prev_outs)
             else:
                 probs = self.predict_cond(self.models, X, state_below, params, ii)
-            log_probs = np.log(probs)
+            log_probs = cp.log(probs)
             if minlen > 0 and ii < minlen:
-                log_probs[:, eos_sym] = -np.inf
+                log_probs[:, eos_sym] = -cp.inf
             # total score for every sample is sum of -log of word prb
-            cand_scores = np.array(hyp_scores)[:, None] - log_probs
+            cand_scores = hyp_scores[:, None] - log_probs
             cand_flat = cand_scores.flatten()
             # Find the best options by calling argsort of flatten array
-            ranks_flat = cand_flat.argsort()[:(k - dead_k)]
+            ranks_flat = cp.argsort(cand_flat)[:(k - dead_k)]
             # Decypher flatten indices
             voc_size = log_probs.shape[1]
             trans_indices = ranks_flat // voc_size  # index of row
@@ -166,7 +167,7 @@ class BeamSearchEnsemble:
             # Form a beam for the next iteration
             new_hyp_samples = []
             new_trans_indices = []
-            new_hyp_scores = np.zeros(k - dead_k).astype('float32')
+            new_hyp_scores = cp.zeros(k - dead_k, dtype='float32')
             if self.return_alphas:
                 new_hyp_alphas = []
             for idx, [ti, wi] in list(enumerate(zip(trans_indices, word_indices))):
@@ -205,7 +206,7 @@ class BeamSearchEnsemble:
                     hyp_scores.append(new_hyp_scores[idx])
                     if self.return_alphas:
                         hyp_alphas.append(new_hyp_alphas[idx])
-            hyp_scores = np.array(hyp_scores)
+            hyp_scores = cp.array(hyp_scores)
             live_k = new_live_k
 
             if new_live_k < 1:
