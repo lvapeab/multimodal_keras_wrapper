@@ -6,7 +6,10 @@ import math
 import sys
 import time
 import numpy as np
-import cupy as cp
+try:
+    import cupy as cp
+except:
+    import numpy as cp
 
 from keras_wrapper.dataset import Data_Batch_Generator
 from keras_wrapper.utils import one_hot_2_indices, checkParameters
@@ -164,6 +167,8 @@ class BeamSearchEnsemble:
             word_indices = ranks_flat % voc_size  # index of col
             costs = cand_flat[ranks_flat]
             best_cost = costs[0]
+            trans_indices = cp.asnumpy(trans_indices)
+            word_indices = cp.asnumpy(word_indices)
             # Form a beam for the next iteration
             new_hyp_samples = []
             new_trans_indices = []
@@ -206,7 +211,7 @@ class BeamSearchEnsemble:
                     hyp_scores.append(new_hyp_scores[idx])
                     if self.return_alphas:
                         hyp_alphas.append(new_hyp_alphas[idx])
-            hyp_scores = cp.array(hyp_scores)
+            hyp_scores = cp.array(np.asarray(hyp_scores,dtype='float32'), dtype='float32')
             live_k = new_live_k
 
             if new_live_k < 1:
