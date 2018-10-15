@@ -5,7 +5,6 @@ import math
 import sys
 import time
 import numpy as np
-
 from keras_wrapper.dataset import Data_Batch_Generator
 from keras_wrapper.utils import one_hot_2_indices, checkParameters
 from keras_wrapper.search import beam_search, interactive_beam_search
@@ -274,7 +273,7 @@ class BeamSearchEnsemble:
                                 coverage_penalties.append(params['coverage_norm_factor'] * cp_penalty)
                         else:
                             coverage_penalties = [0.0 for _ in samples]
-                        scores = [co / lp + cp for co, lp, cp in zip(scores, length_penalties, coverage_penalties)]
+                        scores = [co / lp + cov_p for co, lp, cov_p in zip(scores, length_penalties, coverage_penalties)]
 
                     elif params['normalize_probs']:
                         counts = [len(sample) ** params['alpha_factor'] for sample in samples]
@@ -396,7 +395,7 @@ class BeamSearchEnsemble:
                     coverage_penalties.append(params['coverage_norm_factor'] * cp_penalty)
             else:
                 coverage_penalties = [0.0 for _ in samples]
-            scores = [co / lp + cp for co, lp, cp in zip(scores, length_penalties, coverage_penalties)]
+            scores = [co / lp + cov_p for co, lp, cov_p in zip(scores, length_penalties, coverage_penalties)]
 
         elif params['normalize_probs']:
             counts = [len(sample) ** params['alpha_factor'] for sample in samples]
@@ -785,7 +784,7 @@ class BeamSearchEnsemble:
 
 
 class InteractiveBeamSearchSampler:
-    def __init__(self, models, dataset, params_prediction, model_weights=None, n_best=False, verbose=0):
+    def __init__(self, models, dataset, params_prediction, excluded_words=None, model_weights=None, n_best=False, verbose=0):
         """
         Class for sampling taking into account the user's feedback
         :param models:
@@ -800,6 +799,7 @@ class InteractiveBeamSearchSampler:
         self.return_alphas = params_prediction.get('coverage_penalty', False) or params_prediction.get('pos_unk', False)
         self.n_best = n_best
         self.verbose = verbose
+        self.excluded_words = excluded_words
         self.model_weights = cp.asarray([1. / len(models)] * len(models), dtype='float32') if (model_weights is None) or (model_weights == []) else model_weights
 
         self._dynamic_display = ((hasattr(sys.stdout, 'isatty') and
@@ -931,12 +931,14 @@ class InteractiveBeamSearchSampler:
                                                           return_alphas=self.return_alphas,
                                                           model_ensemble=True,
                                                           n_models=len(self.models),
+                                                          excluded_words=self.excluded_words,
                                                           fixed_words=fixed_words,
                                                           max_N=max_N,
                                                           isles=isles,
                                                           valid_next_words=valid_next_words,
                                                           null_sym=self.dataset.extra_words['<null>'],
                                                           idx2word=idx2word)
+
         if params['length_penalty'] or params['coverage_penalty']:
             if params['length_penalty']:
                 length_penalties = [((5 + len(sample)) ** params['length_norm_factor'] / (5 + 1) ** params['length_norm_factor'])  # this 5 is a magic number by Google...
@@ -959,7 +961,7 @@ class InteractiveBeamSearchSampler:
                     coverage_penalties.append(params['coverage_norm_factor'] * cp_penalty)
             else:
                 coverage_penalties = [0.0 for _ in samples]
-            scores = [co / lp + cp for co, lp, cp in zip(scores, length_penalties, coverage_penalties)]
+            scores = [co / lp + cov_p for co, lp, cov_p in zip(scores, length_penalties, coverage_penalties)]
 
         elif params['normalize_probs']:
             counts = [len(sample) ** params['alpha_factor'] for sample in samples]
