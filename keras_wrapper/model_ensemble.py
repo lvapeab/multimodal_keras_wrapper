@@ -856,7 +856,6 @@ class InteractiveBeamSearchSampler:
         probs = sum(probs_list[i] * self.model_weights[i] for i in range(len(self.models)))
         return probs
 
-
     def sample_beam_search_interactive(self, src_sentence, fixed_words=None, max_N=0,
                                        isles=None, valid_next_words=None, idx2word=None):
         """

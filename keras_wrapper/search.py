@@ -305,8 +305,7 @@ def interactive_beam_search(model, X, params, return_alphas=False, model_ensembl
     if maxlen < len_fixed_words:
         maxlen += len_fixed_words
 
-    state_below = np.asarray([null_sym] * live_k) if pad_on_batch else \
-            np.asarray([np.zeros(params['state_below_maxlen']) + null_sym] * live_k)
+    state_below = np.asarray([null_sym] * live_k) if pad_on_batch else np.asarray([np.zeros(params['state_below_maxlen']) + null_sym] * live_k)
     prev_out = [None] * n_models if model_ensemble else None
 
     if valid_next_words is not None:
