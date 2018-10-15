@@ -8,7 +8,7 @@ import numpy as np
 
 from keras_wrapper.dataset import Data_Batch_Generator
 from keras_wrapper.utils import one_hot_2_indices, checkParameters
-from keras_wrapper.search import beam_search
+from keras_wrapper.search import beam_search, interactive_beam_search
 try:
     import cupy as cp
     cupy = True
@@ -249,7 +249,7 @@ class BeamSearchEnsemble:
                     for input_id in params['model_inputs']:
                         x[input_id] = np.asarray([X[input_id][i]])
                     samples, scores, alphas = beam_search(self, x, params, null_sym=self.dataset.extra_words['<null>'],
-                                                          model_ensemble=True, n_models=len(self.models))
+                                                          return_alphas=self.return_alphas, model_ensemble=True, n_models=len(self.models))
 
                     if params['length_penalty'] or params['coverage_penalty']:
                         if params['length_penalty']:
@@ -371,7 +371,8 @@ class BeamSearchEnsemble:
         x = dict()
         for input_id in params['model_inputs']:
             x[input_id] = np.asarray([X[input_id]])
-        samples, scores, alphas = beam_search(x, params, null_sym=self.dataset.extra_words['<null>'])
+        samples, scores, alphas = beam_search(self, x, params, null_sym=self.dataset.extra_words['<null>'], return_alphas=self.return_alphas,
+                                              model_ensemble=True, n_models=len(self.models))
 
         if params['length_penalty'] or params['coverage_penalty']:
             if params['length_penalty']:
@@ -783,6 +784,209 @@ class BeamSearchEnsemble:
         return self.predictBeamSearchNet()
 
 
+class InteractiveBeamSearchSampler:
+    def __init__(self, models, dataset, params_prediction, model_weights=None, n_best=False, verbose=0):
+        """
+        Class for sampling taking into account the user's feedback
+        :param models:
+        :param dataset:
+        :param params_prediction:
+        :param verbose:
+        """
+        self.models = models
+        self.dataset = dataset
+        self.params = params_prediction
+        self.optimized_search = params_prediction.get('optimized_search', False)
+        self.return_alphas = params_prediction.get('coverage_penalty', False) or params_prediction.get('pos_unk', False)
+        self.n_best = n_best
+        self.verbose = verbose
+        self.model_weights = cp.asarray([1. / len(models)] * len(models), dtype='float32') if (model_weights is None) or (model_weights == []) else model_weights
+
+        self._dynamic_display = ((hasattr(sys.stdout, 'isatty') and
+                                  sys.stdout.isatty()) or
+                                 'ipykernel' in sys.modules)
+        if self.verbose > 0:
+            logging.info('<<< "Optimized search: %s >>>' % str(self.optimized_search))
+
+    # PREDICTION FUNCTIONS: Functions for making prediction on input samples
+    def predict_cond_optimized(self, X, states_below, params, ii, prev_outs):
+        """
+        Call the prediction functions of all models, according to their inputs
+        :param X: Input data
+        :param states_below: Previously generated words (in case of conditional models)
+        :param params: Model parameters
+        :param ii: Decoding time-step
+        :param prev_outs: Only for optimized models. Outputs from the previous time-step.
+        :return: Combined outputs from the ensemble
+        """
+        probs_list = []
+        prev_outs_list = []
+        alphas_list = []
+        for i, model in list(enumerate(self.models)):
+            [model_probs, next_outs] = model.predict_cond_optimized(X,
+                                                                    states_below,
+                                                                    params,
+                                                                    ii,
+                                                                    prev_out=prev_outs[i])
+            probs_list.append(model_probs)
+            if self.return_alphas:
+                alphas_list.append(next_outs[-1][0])  # Shape: (k, n_steps)
+                next_outs = next_outs[:-1]
+            prev_outs_list.append(next_outs)
+        probs_list = cp.asarray(probs_list)
+        alphas_list = cp.asarray(alphas_list)
+        probs = cp.sum(self.model_weights[:, None, None] * probs_list, axis=0)
+        if self.return_alphas:
+            alphas = cp.sum(self.model_weights[:, None, None] * alphas_list, axis=0)
+        else:
+            alphas = None
+
+        return probs, prev_outs_list, alphas
+
+    def predict_cond(self, X, states_below, params, ii):
+        """
+        Call the prediction functions of all models, according to their inputs
+        :param models: List of models in the ensemble
+        :param X: Input data
+        :param states_below: Previously generated words (in case of conditional models)
+        :param params: Model parameters
+        :param ii: Decoding time-step
+        :return: Combined outputs from the ensemble
+        """
+
+        probs_list = []
+        prev_outs_list = []
+        alphas_list = []
+        for i, model in list(enumerate(self.models)):
+            probs_list.append(model.predict_cond(X, states_below, params, ii))
+
+        probs = sum(probs_list[i] * self.model_weights[i] for i in range(len(self.models)))
+        return probs
+
+
+    def sample_beam_search_interactive(self, src_sentence, fixed_words=None, max_N=0,
+                                       isles=None, valid_next_words=None, idx2word=None):
+        """
+        Samples a sentence using the restrictions provided in fixed_words.
+        :param src_sentence: Source sentence to translate.
+        :param fixed_words: Dictionary of words fixed by the user: {position: word}.
+        :param max_N: Maximum steps to look forward (Eq. 12 from the "Interactive neural machine translation" paper).
+        :param isles: Isles fixed by the user. List of (isle_index, [words]) (Although isle_index is never used).
+        :param valid_next_words: List of candidate words to be the next one to generate (after generating fixed_words).
+        :param idx2word: Mapping between indices and words.
+        :return:
+        """
+        # Check input parameters and recover default values if needed
+        if fixed_words is None:
+            fixed_words = dict()
+        if isles is None:
+            isles = list()
+        if idx2word is None:
+            idx2word = dict()
+
+        default_params = {'max_batch_size': 50,
+                          'n_parallel_loaders': 8,
+                          'beam_size': 5,
+                          'normalize': False,
+                          'mean_substraction': True,
+                          'predict_on_sets': ['val'],
+                          'maxlen': 20,
+                          'n_samples': -1,
+                          'model_inputs': ['source_text', 'state_below'],
+                          'model_outputs': ['description'],
+                          'dataset_inputs': ['source_text', 'state_below'],
+                          'dataset_outputs': ['description'],
+                          'sampling_type': 'max_likelihood',
+                          'words_so_far': False,
+                          'optimized_search': False,
+                          'state_below_index': -1,
+                          'output_text_index': 0,
+                          'search_pruning': False,
+                          'pos_unk': False,
+                          'normalize_probs': False,
+                          'alpha_factor': 0.0,
+                          'coverage_penalty': False,
+                          'length_penalty': False,
+                          'length_norm_factor': 0.0,
+                          'coverage_norm_factor': 0.0,
+                          'output_max_length_depending_on_x': False,
+                          'output_max_length_depending_on_x_factor': 3,
+                          'output_min_length_depending_on_x': False,
+                          'output_min_length_depending_on_x_factor': 2
+                          }
+        params = checkParameters(self.params, default_params)
+        params['pad_on_batch'] = self.dataset.pad_on_batch[params['dataset_inputs'][-1]]
+        if self.n_best:
+            n_best_list = []
+        # Prepare data generator: We won't use an Homogeneous_Data_Batch_Generator here
+        X = dict()
+        for input_id in params['model_inputs']:
+            X[input_id] = src_sentence
+        x = dict()
+        for input_id in params['model_inputs']:
+            x[input_id] = np.asarray([X[input_id]])
+        samples, scores, alphas = interactive_beam_search(self,
+                                                          x,
+                                                          params,
+                                                          return_alphas=self.return_alphas,
+                                                          model_ensemble=True,
+                                                          n_models=len(self.models),
+                                                          fixed_words=fixed_words,
+                                                          max_N=max_N,
+                                                          isles=isles,
+                                                          valid_next_words=valid_next_words,
+                                                          null_sym=self.dataset.extra_words['<null>'],
+                                                          idx2word=idx2word)
+        if params['length_penalty'] or params['coverage_penalty']:
+            if params['length_penalty']:
+                length_penalties = [((5 + len(sample)) ** params['length_norm_factor'] / (5 + 1) ** params['length_norm_factor'])  # this 5 is a magic number by Google...
+                                    for sample in samples]
+            else:
+                length_penalties = [1.0 for _ in samples]
+
+            if params['coverage_penalty']:
+                coverage_penalties = []
+                for k, sample in list(enumerate(samples)):
+                    # We assume that source sentences are at the first position of x
+                    x_sentence = x[params['model_inputs'][0]][0]
+                    alpha = np.asarray(alphas[k])
+                    cp_penalty = 0.0
+                    for cp_i in range(len(x_sentence)):
+                        att_weight = 0.0
+                        for cp_j in range(len(sample)):
+                            att_weight += alpha[cp_j, cp_i]
+                        cp_penalty += np.log(min(att_weight, 1.0))
+                    coverage_penalties.append(params['coverage_norm_factor'] * cp_penalty)
+            else:
+                coverage_penalties = [0.0 for _ in samples]
+            scores = [co / lp + cp for co, lp, cp in zip(scores, length_penalties, coverage_penalties)]
+
+        elif params['normalize_probs']:
+            counts = [len(sample) ** params['alpha_factor'] for sample in samples]
+            scores = [co / cn for co, cn in zip(scores, counts)]
+
+        if self.n_best:
+            n_best_indices = np.argsort(scores)
+            n_best_scores = np.asarray(scores)[n_best_indices]
+            n_best_samples = np.asarray(samples)[n_best_indices]
+            if alphas is not None:
+                n_best_alphas = [np.stack(alphas[i]) for i in n_best_indices]
+            else:
+                n_best_alphas = [None] * len(n_best_indices)
+            n_best_list.append([n_best_samples, n_best_scores, n_best_alphas])
+
+        best_score_idx = np.argmin(scores)
+        best_sample = samples[best_score_idx]
+        if self.return_alphas:
+            best_alphas = np.asarray(alphas[best_score_idx])
+        else:
+            best_alphas = None
+        if self.n_best:
+            return (np.asarray(best_sample), scores[best_score_idx], np.asarray(best_alphas)), n_best_list
+        else:
+            return np.asarray(best_sample), scores[best_score_idx], np.asarray(best_alphas)
+
+
 class PredictEnsemble:
     def __init__(self, models, dataset, params_prediction, postprocess_fun=None, verbose=0):
         """
@@ -897,7 +1101,7 @@ class PredictEnsemble:
                           'max_eval_samples': None
                           }
 
-        params = che(self.params, default_params)
+        params = checkParameters(self.params, default_params)
         predictions = dict()
 
         for s in params['predict_on_sets']:
