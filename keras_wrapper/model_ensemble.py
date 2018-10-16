@@ -10,10 +10,9 @@ from keras_wrapper.utils import one_hot_2_indices, checkParameters
 from keras_wrapper.search import beam_search, interactive_beam_search
 try:
     import cupy as cp
-    cupy = True
 except:
     import numpy as cp
-    cupy = False
+    logging.info('<<< Cupy not available. Using numpy. >>>')
 
 
 class BeamSearchEnsemble:
