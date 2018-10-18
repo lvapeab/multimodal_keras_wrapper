@@ -816,28 +816,29 @@ class InteractiveBeamSearchSampler:
         :param prev_outs: Only for optimized models. Outputs from the previous time-step.
         :return: Combined outputs from the ensemble
         """
-        probs_list = []
+        probs_list = None
+        alphas_list = None
         prev_outs_list = []
-        alphas_list = []
         for i, model in list(enumerate(self.models)):
             [model_probs, next_outs] = model.predict_cond_optimized(X,
                                                                     states_below,
                                                                     params,
                                                                     ii,
                                                                     prev_out=prev_outs[i])
-            probs_list.append(model_probs)
+
+            if probs_list is None:
+                probs_list = model_probs
+            else:
+                probs_list = cp.vstack((probs_list, model_probs))
             if self.return_alphas:
-                alphas_list.append(next_outs[-1][0])  # Shape: (k, n_steps)
+                if alphas_list is None:
+                    alphas_list = next_outs[-1][0]
+                else:
+                    alphas_list = np.vstack((alphas_list, next_outs[-1][0]))
                 next_outs = next_outs[:-1]
             prev_outs_list.append(next_outs)
-        probs_list = cp.asarray(probs_list)
-        alphas_list = cp.asarray(alphas_list)
-        probs = cp.sum(self.model_weights[:, None, None] * probs_list, axis=0)
-        if self.return_alphas:
-            alphas = cp.sum(self.model_weights[:, None, None] * alphas_list, axis=0)
-        else:
-            alphas = None
-
+        probs = cp.sum(cp.asarray(self.model_weights[:, None, None]) * probs_list, axis=0)
+        alphas = np.sum(self.model_weights[:, None, None] * alphas_list, axis=0) if self.return_alphas else None
         return probs, prev_outs_list, alphas
 
     def predict_cond(self, X, states_below, params, ii):
@@ -858,6 +859,11 @@ class InteractiveBeamSearchSampler:
             probs_list.append(model.predict_cond(X, states_below, params, ii))
 
         probs = sum(probs_list[i] * self.model_weights[i] for i in range(len(self.models)))
+
+        if self.return_alphas:
+            alphas = np.asarray(sum(alphas_list[i] for i in range(len(self.models))))
+        else:
+            alphas = None
         return probs
 
     def sample_beam_search_interactive(self, src_sentence, fixed_words=None, max_N=0,
