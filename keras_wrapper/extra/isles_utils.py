@@ -157,6 +157,6 @@ def test_utils():
     s1 = 'Guia de Servicios de exploracion de red de CentreWare xi'
     s2 = 'Guia de instalaci\xc3\xb3n de Servicios de exploracion de red de CentreWare xi'
 
-    print "Sentence 1:", s1
-    print "Sentence 2:", s2
-    print find_isles(s1.split(), s2.split())
+    print ("Sentence 1:", s1)
+    print ("Sentence 2:", s2)
+    print (find_isles(s1.split(), s2.split()))
