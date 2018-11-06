@@ -847,7 +847,6 @@ class InteractiveBeamSearchSampler:
         alphas = np.sum(self.model_weights[:, None, None] * alphas_list, axis=0) if self.return_alphas else None
         return probs, prev_outs_list, alphas
 
-
     def predict_cond(self, X, states_below, params, ii):
         """
         Call the prediction functions of all models, according to their inputs
