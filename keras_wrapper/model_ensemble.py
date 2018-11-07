@@ -803,7 +803,7 @@ class InteractiveBeamSearchSampler:
         self.n_best = n_best
         self.verbose = verbose
         self.excluded_words = excluded_words
-        self.model_weights = cp.asarray([1. / len(models)] * len(models), dtype='float32') if (model_weights is None) or (model_weights == []) else model_weights
+        self.model_weights = np.asarray([1. / len(models)] * len(models), dtype='float32') if (model_weights is None) or (model_weights == []) else np.asarray(model_weights, dtype='float32')
 
         self._dynamic_display = ((hasattr(sys.stdout, 'isatty') and
                                   sys.stdout.isatty()) or
