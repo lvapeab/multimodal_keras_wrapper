@@ -272,7 +272,6 @@ def interactive_beam_search(model, X, params, return_alphas=False, model_ensembl
         unfixed_isles = []
     len_fixed_words = len(fixed_words.keys())
     ii = 0
-
     k = params['beam_size']
     samples = []
     sample_scores = []
@@ -280,7 +279,7 @@ def interactive_beam_search(model, X, params, return_alphas=False, model_ensembl
     dead_k = 0  # samples that reached eos
     live_k = 1  # samples that did not yet reach eos
     hyp_samples = [[]] * live_k
-    hyp_scores = cp.zeros(live_k).astype('float32')
+    hyp_scores = cp.zeros(live_k, dtype='float32')
     ret_alphas = return_alphas or params['pos_unk']
     if ret_alphas:
         sample_alphas = []
@@ -301,10 +300,14 @@ def interactive_beam_search(model, X, params, return_alphas=False, model_ensembl
             params['output_max_length_depending_on_x'] else params['maxlen']
         maxlen = min(params['state_below_maxlen'] - 1, maxlen)
 
-    if maxlen < len_fixed_words:
-        maxlen += len_fixed_words
-
-    state_below = np.asarray([null_sym] * live_k) if pad_on_batch else np.asarray([np.zeros(params['state_below_maxlen']) + null_sym] * live_k)
+    # we must include an additional dimension if the input for each timestep are all the generated "words_so_far"
+    if params['words_so_far']:
+        if k > maxlen:
+            raise NotImplementedError(
+                "BEAM_SIZE can't be higher than MAX_OUTPUT_TEXT_LEN on the current implementation.")
+        state_below = np.asarray([[null_sym]] * live_k) if pad_on_batch else np.asarray([np.zeros((maxlen, maxlen))] * live_k)
+    else:
+        state_below = np.asarray([null_sym] * live_k) if pad_on_batch else np.asarray([np.zeros(params['state_below_maxlen']) + null_sym] * live_k)
     prev_out = [None] * n_models if model_ensemble else None
 
     if valid_next_words is not None:
@@ -337,7 +340,6 @@ def interactive_beam_search(model, X, params, return_alphas=False, model_ensembl
 
         if len(unfixed_isles) > 0 or ii <= max_fixed_pos:
             log_probs[:, eos_sym] = -cp.inf
-
         if valid_next_words is not None and ii == len_fixed_words:
             # logger.log(3, 'valid_next_words: ' + str(valid_next_words))
             if valid_next_words != dict():
@@ -352,11 +354,12 @@ def interactive_beam_search(model, X, params, return_alphas=False, model_ensembl
                 word_indices = [fixed_words[ii]] * len(trans_indices)
                 costs = cp.array(hyp_scores)
             else:
-                # Decypher flatten indices
+                # total score for every sample is sum of -log of word prb
                 cand_scores = hyp_scores[:, None] - log_probs
                 cand_flat = cand_scores.flatten()
                 # Find the best options by calling argsort of flatten array
                 ranks_flat = cp.argsort(cand_flat)[:(k - dead_k)]
+                # Decypher flatten indices
                 voc_size = log_probs.shape[1]
                 trans_indices = ranks_flat / voc_size  # index of row
                 word_indices = ranks_flat % voc_size  # index of col
@@ -367,13 +370,13 @@ def interactive_beam_search(model, X, params, return_alphas=False, model_ensembl
                 word_indices = cp.asnumpy(word_indices)
                 if ret_alphas:
                     alphas = cp.asnumpy(alphas)
+
             # Form a beam for the next iteration
             new_hyp_samples = []
             new_trans_indices = []
-            new_hyp_scores = cp.zeros(k - dead_k).astype('float32')
+            new_hyp_scores = cp.zeros(k - dead_k, dtype='float32')
             if ret_alphas:
                 new_hyp_alphas = []
-
             for idx, [ti, wi] in list(enumerate(zip(trans_indices, word_indices))):
                 if params['search_pruning']:
                     if costs[idx] < k * best_cost:
@@ -427,7 +430,12 @@ def interactive_beam_search(model, X, params, return_alphas=False, model_ensembl
                            np.zeros((state_below.shape[0],
                                      max(params['state_below_maxlen'] - state_below.shape[1] - 1, 0)), dtype='int64')))
 
+            # we must include an additional dimension if the input for each timestep are all the generated words so far
+            if params['words_so_far']:
+                state_below = np.expand_dims(state_below, axis=0)
+
             if params['optimized_search'] and ii > 0:
+                # filter next search inputs w.r.t. remaining samples
                 if model_ensemble:
                     for n_model in range(n_models):
                         # filter next search inputs w.r.t. remaining samples

@@ -244,7 +244,9 @@ class BeamSearchEnsemble:
                     x = dict()
                     for input_id in params['model_inputs']:
                         x[input_id] = np.asarray([X[input_id][i]])
-                    samples, scores, alphas = beam_search(self, x, params,
+                    samples, scores, alphas = beam_search(self,
+                                                          x,
+                                                          params,
                                                           null_sym=self.dataset.extra_words['<null>'],
                                                           return_alphas=self.return_alphas,
                                                           model_ensemble=True,
@@ -872,8 +874,10 @@ class InteractiveBeamSearchSampler:
             alphas = None
         return probs
 
-    def sample_beam_search_interactive(self, src_sentence, fixed_words=None, max_N=0,
-                                       isles=None, valid_next_words=None, idx2word=None):
+    def sample_beam_search_interactive(self, src_sentence,
+                                       fixed_words=None, max_N=0,
+                                       isles=None, valid_next_words=None,
+                                       idx2word=None):
         """
         Samples a sentence using the restrictions provided in fixed_words.
         :param src_sentence: Source sentence to translate.
@@ -926,13 +930,10 @@ class InteractiveBeamSearchSampler:
         params['pad_on_batch'] = self.dataset.pad_on_batch[params['dataset_inputs'][-1]]
         if self.n_best:
             n_best_list = []
-        # Prepare data generator: We won't use an Homogeneous_Data_Batch_Generator here
-        X = dict()
-        for input_id in params['model_inputs']:
-            X[input_id] = src_sentence
+        # Prepare data
         x = dict()
         for input_id in params['model_inputs']:
-            x[input_id] = np.asarray([X[input_id]])
+            x[input_id] = np.asarray([src_sentence])
         samples, scores, alphas = interactive_beam_search(self,
                                                           x,
                                                           params,

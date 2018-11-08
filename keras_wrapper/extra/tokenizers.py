@@ -320,18 +320,16 @@ def tokenize_questions(caption):
     return resAns
 
 
-def tokenize_bpe(self, caption):
+def tokenize_bpe(BPE, caption):
     """
     Applies BPE segmentation (https://github.com/rsennrich/subword-nmt)
     :param caption: Caption to detokenize.
     :return: Encoded version of caption.
     """
-    if not self.BPE_built:
-        raise Exception('Prior to use the "tokenize_bpe" method, you should invoke "build_BPE"')
     if isinstance(caption, str) and sys.version_info < (3, 0):
         caption = caption.decode('utf-8')
     tokenized = re.sub(u'[\n\t]+', u'', caption)
-    tokenized = self.BPE.segment(tokenized).strip()
+    tokenized = BPE.segment(tokenized).strip()
     return tokenized
 
 
