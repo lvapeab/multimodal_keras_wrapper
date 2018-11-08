@@ -2,9 +2,6 @@
 import copy
 import numpy as np
 import logging
-
-from sympy.functions.elementary.complexes import re
-
 from keras_wrapper.extra.isles_utils import *
 
 logging.basicConfig(level=logging.DEBUG,
