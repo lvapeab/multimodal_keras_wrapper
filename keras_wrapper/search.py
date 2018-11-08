@@ -312,8 +312,8 @@ def interactive_beam_search(model, X, params, return_alphas=False, model_ensembl
 
     if valid_next_words is not None:
         # We need to generate at least the partial hypothesis provided by the user
-        minlen += 1
-        maxlen += 1
+        minlen += max(minlen, len(valid_next_words)) + 1
+        maxlen += max(maxlen, len(valid_next_words)) + 1
 
     while ii <= maxlen:
         # for every possible live sample calc prob for every possible label
