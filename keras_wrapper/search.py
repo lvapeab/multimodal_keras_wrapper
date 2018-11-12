@@ -307,10 +307,15 @@ def interactive_beam_search(model, X, params, return_alphas=False, model_ensembl
         state_below = np.asarray([null_sym] * live_k) if pad_on_batch else np.asarray([np.zeros(params['state_below_maxlen']) + null_sym] * live_k)
     prev_out = [None] * n_models if model_ensemble else None
 
-    if valid_next_words is not None:
+
+    if fixed_words is not None:
         # We need to generate at least the partial hypothesis provided by the user
-        minlen += max(minlen, len(valid_next_words)) + 1
-        maxlen += max(maxlen, len(valid_next_words)) + 1
+        minlen += max(minlen, len(fixed_words)) + 1
+        maxlen += len(fixed_words) + 1
+
+    if valid_next_words is not None:
+        # We need to generate at least the next partial word provided by the user
+        minlen += 1
 
     while ii <= maxlen:
         # for every possible live sample calc prob for every possible label
@@ -337,6 +342,7 @@ def interactive_beam_search(model, X, params, return_alphas=False, model_ensembl
 
         if len(unfixed_isles) > 0 or ii <= max_fixed_pos:
             log_probs[:, eos_sym] = -cp.inf
+
         if valid_next_words is not None and ii == len_fixed_words:
             # logger.log(3, 'valid_next_words: ' + str(valid_next_words))
             if valid_next_words != dict():
