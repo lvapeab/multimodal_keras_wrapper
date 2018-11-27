@@ -875,8 +875,10 @@ class InteractiveBeamSearchSampler:
         return probs
 
     def sample_beam_search_interactive(self, src_sentence,
-                                       fixed_words=None, max_N=0,
-                                       isles=None, valid_next_words=None,
+                                       fixed_words=None,
+                                       max_N=0,
+                                       isles=None,
+                                       valid_next_words=None,
                                        idx2word=None):
         """
         Samples a sentence using the restrictions provided in fixed_words.

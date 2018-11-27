@@ -149,7 +149,6 @@ class OnlineTrainer:
         # 1. Translate source sentence with the current model. Get a single hypothesis or the N-best list
         if self.params_prediction['n_best_optimizer']:
             [trans_indices, costs, alphas], n_best = self.sampler.sample_beam_search(x[0])
-
         else:
             trans_indices, costs, alphas = self.sampler.sample_beam_search(x[0])
 
@@ -179,7 +178,7 @@ class OnlineTrainer:
                 hypothesis_to_write = hypothesis
             # Store original hypothesis
             if self.params_prediction['store_hypotheses'] is not None:
-                list2file(self.params_prediction['store_hypotheses'], [hypothesis_to_write + '\n'], permission='a')
+                list2file(self.params_prediction['store_hypotheses'], [hypothesis_to_write], permission='a')
 
             if self.verbose > 1:
                 logging.info('Hypothesis: %s' % str(hypothesis_to_write))
