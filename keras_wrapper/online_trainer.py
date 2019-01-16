@@ -3,7 +3,7 @@ from __future__ import print_function
 
 import copy
 import logging
-
+import sys
 import numpy as np
 
 from keras_wrapper.cnn_model import Model_Wrapper
@@ -12,8 +12,7 @@ from keras_wrapper.utils import indices_2_one_hot, decode_predictions_beam_searc
 
 
 def equalize_sentences(y, h, same_length=True, y_as_one_hot=True, h_as_one_hot=True, vocabulary_len_y=None,
-                       vocabulary_len_h=None,
-                       compute_masks=True, fixed_length=-1, return_states_below=True, null_idx=2):
+                       vocabulary_len_h=None, compute_masks=True, fixed_length=-1, return_states_below=True, null_idx=2):
     """
     Equalizes (max length) the sentences y and h.
     :param y: Sentence 1 to equalize (e.g. reference). As a list of indices.
@@ -26,7 +25,6 @@ def equalize_sentences(y, h, same_length=True, y_as_one_hot=True, h_as_one_hot=T
     :param return_states_below: Whether to compute the states below of y and h.
     :return: Equalized y, h (and optionally state_below_y, state_below_h)
     """
-
     if y_as_one_hot:
         assert vocabulary_len_y is not None, 'I need the size of the vocabulary for converting y to one hot!'
     if h_as_one_hot:
@@ -180,13 +178,13 @@ class OnlineTrainer:
             if self.params_prediction['store_hypotheses'] is not None:
                 list2file(self.params_prediction['store_hypotheses'], [hypothesis_to_write], permission='a')
 
-            if self.verbose > 1:
-                logging.info('Hypothesis: %s' % str(hypothesis_to_write))
+            if self.verbose > 2:
+                logging.info(u'Hypothesis: %s' % hypothesis_to_write)
         maxlen_hypothesis_reference = max(len(trans_indices), len(y[0]))
 
         # If we are working with an n-best list, we'll probably have to decode it
         if self.params_prediction['n_best_optimizer']:
-            if self.verbose > 0:
+            if self.verbose > 2:
                 print("")
                 print(u"\tReference: ", trg_words[0].encode('utf-8'))
 
@@ -293,9 +291,7 @@ class OnlineTrainer:
                                     current_permutation_train_inputs = [x, state_below_y,
                                                                         np.asarray([state_below_top_metric_h]),
                                                                         np.asarray([state_below_top_prob_h]),
-                                                                        np.asarray([self.params_training[
-                                                                            'additional_training_settings'].get(
-                                                                            'lambda', 0.5)])] + \
+                                                                        np.asarray([self.params_training['additional_training_settings'].get('lambda', 0.5)])] + \
                                                                        [y, top_metric_h, top_prob_h]
                                 else:
                                     current_permutation_train_inputs = [x, state_below_top_metric_h,
@@ -381,9 +377,13 @@ class OnlineTrainer:
                     # With custom losses, we'll probably use the hypothesis as training sample -> Convert to one-hot
                     # Tensors for computing p(h_i|x)
 
-                    if 'kl_diff' in self.params_training.get('loss') or 'weighted_log_diff' in self.params_training.get(
-                            'loss'):
-                        y, hyp, state_below_y, state_below_h, mask_y, mask_h = equalize_sentences(y[0], trans_indices,
+                    if 'kl_diff' == self.params_training.get('loss') or \
+                                    'weighted_log_diff' == self.params_training.get('loss').keys()[0] or \
+                                    'pas_weighted_log_diff' == self.params_training.get('loss').keys()[0] or \
+                                    'minmax_categorical_crossentropy' == self.params_training.get('loss').keys()[0] or \
+                                    'log_prob_kl_diff' == self.params_training.get('loss').keys()[0]:
+                        y, hyp, state_below_y, state_below_h, mask_y, mask_h = equalize_sentences(y[0],
+                                                                                                  trans_indices,
                                                                                                   same_length=True,
                                                                                                   y_as_one_hot=True,
                                                                                                   h_as_one_hot=True,
@@ -399,35 +399,40 @@ class OnlineTrainer:
                         mask_h = np.asarray([mask_h], dtype=state_below_h.dtype)
 
                     # Build model inputs according to those required for each loss function
-                    if 'log_diff' in self.params_training.get('loss') or 'kl_diff' in self.params_training.get('loss'):
+                    if 'log_diff' in self.params_training.get('loss') or 'kl_diff' == self.params_training.get('loss'):
                         train_inputs = [x, state_below_y, state_below_h] + [y, hyp]
-                    elif 'log_diff_plus_categorical_crossentropy' in self.params_training.get('loss').keys()[0]:
-                        train_inputs = [x, state_below_y, state_below_y, state_below_h,
-                                        np.asarray([self.params_training['additional_training_settings'].get('lambda',
-                                                                                                             0.5)])] + \
-                                       [y, y, hyp]
-                    elif 'weighted_log_diff' in self.params_training.get('loss').keys()[0]:
+
+                    elif 'log_prob_kl_diff' in self.params_training.get('loss').keys()[0]:
                         train_inputs = [x, state_below_y, state_below_h,
-                                        np.asarray([self.params_training['additional_training_settings'].get('lambda',
-                                                                                                             0.5)])] + \
+                                        np.asarray([self.params_training['additional_training_settings'].get('lambda', 0.5)])] + \
                                        [y, hyp, mask_y, mask_h]
 
-                    elif 'hybrid_log_diff' in self.params_training.get('loss').keys()[0]:
-                        train_inputs = [x, state_below_y, state_below_h, y, hyp,
-                                        np.asarray([1.]), np.asarray([0.]), np.asarray([0.])]
-                        p_t_y = model.predict(train_inputs, batch_size=1, verbose=0)
-                        train_inputs = [x, state_below_y, state_below_h, y, hyp,
-                                        np.asarray(
-                                            [self.params_training['additional_training_settings'].get('d', 0.5)]),
-                                        np.asarray(
-                                            [self.params_training['additional_training_settings'].get('c', 0.5)]),
-                                        p_t_y]
+                    elif 'log_diff_plus_categorical_crossentropy' == self.params_training.get('loss').keys()[0]:
+                        train_inputs = [x, state_below_y, state_below_y, state_below_h,
+                                        np.asarray([self.params_training['additional_training_settings'].get('lambda', 0.5)])] + \
+                                       [y, y, hyp]
+                    elif 'weighted_log_diff' in self.params_training.get('loss').keys()[0]:
+                        if 'pas_weighted_log_diff' == self.params_training.get('loss').keys()[0]:
+                            # The PAS algorithm requires to switch the loss subderivative to 1. or 0.
+                            # Compute loss y
+                            train_inputs_y = [x, state_below_y, state_below_h,
+                                            np.asarray([0.])] + [y, hyp, mask_y, mask_h]
+                            loss_y = model.evaluate(train_inputs_y,
+                                                    np.zeros((y.shape[0], 1), dtype='float32'), batch_size=1, verbose=0)
 
-                    elif 'categorical_crossentropy2' in self.params_training.get('loss').keys()[0]:
-                        train_inputs = [x, state_below_y] + [y]
+                            # Compute loss h
+                            train_inputs_h = [x, state_below_h, state_below_h,
+                                            np.asarray([0.])] + [hyp, hyp, mask_h, mask_h]
+                            loss_h = model.evaluate(train_inputs_h,
+                                                    np.zeros((y.shape[0], 1), dtype='float32'), batch_size=1, verbose=0)
+                            loss = 0. if loss_y < loss_h else 1.
 
-                    # Dummy outputs for our dummy loss
-                    train_outputs = np.zeros((train_inputs[0].shape[0], 1), dtype='float32')
+                        else:
+                            loss = 1.
+                        train_inputs = [x, state_below_y, state_below_h,
+                                        np.asarray([loss * self.params_training['additional_training_settings'].get('lambda', 0.5)])] + \
+                                       [y, hyp, mask_y, mask_h]
+
                     # The PAS-like algorithms require to set weights and switch the loss subderivative  to 1. or 0.
                     if 'pas' in self.params_training['optimizer']:
                         weights = model.trainable_weights
@@ -438,9 +443,13 @@ class OnlineTrainer:
                         # and switch the loss subderivative  to 1. or 0.
                         loss_val = model.evaluate(train_inputs,
                                                   np.zeros((y.shape[0], 1), dtype='float32'),
-                                                  batch_size=1, verbose=0)
+                                                  batch_size=1,
+                                                  verbose=0)
                         loss = 1.0 if loss_val > 0 else 0.0
                         model.optimizer.loss_value.set_value(loss)
+                        # Dummy outputs for our dummy loss
+                        train_outputs = np.zeros((train_inputs[0].shape[0], 1), dtype='float32')
+
                         for k in range(self.params_training['additional_training_settings'].get('k', 1)):
                             # Fit!
                             model.fit(x=train_inputs,
@@ -456,6 +465,72 @@ class OnlineTrainer:
                                       sample_weight=None,
                                       initial_epoch=0)
                             self.n_updates += loss
+
+                    if 'minmax_categorical_crossentropy' == self.params_training.get('loss').keys()[0]:
+                        if not np.all(hyp == y):
+                            loss_y = 1.
+                            loss_h = 0.
+                            updates = 0
+                            while loss_y - loss_h > 0 and \
+                                            updates < self.params_training['additional_training_settings'].get('k', 1):
+                                model.optimizer.set_lr(self.params_training['lr'])
+                                # Xent on references -> adjust loss weights
+                                train_y_inputs = [x, state_below_y, state_below_h,
+                                                 np.asarray([1.]), np.asarray([0.])] + \
+                                                 [y, hyp, mask_y, mask_h]
+
+                                # Xent on hypotheses -> adjust loss weights
+                                train_h_inputs = [x, state_below_y, state_below_h,
+                                                 np.asarray([0.]), np.asarray([-1.])] + \
+                                                 [y, hyp, mask_y, mask_h]
+                                # Dummy outputs for our dummy loss
+                                train_outputs = np.zeros((train_y_inputs[0].shape[0], 1), dtype='float32')
+
+                                # Fit!
+                                model.fit(x=train_y_inputs,
+                                          y=train_outputs,
+                                          batch_size=min(self.params_training['batch_size'], len(x)),
+                                          epochs=self.params_training['n_epochs'],
+                                          verbose=self.params_training['verbose'],
+                                          callbacks=[],
+                                          validation_data=None,
+                                          validation_split=self.params_training.get('val_split', 0.),
+                                          shuffle=self.params_training['shuffle'],
+                                          class_weight=None,
+                                          sample_weight=None,
+                                          initial_epoch=0)
+                                self.n_updates += 1
+
+                                loss_y = model.evaluate(train_y_inputs,
+                                                        train_outputs,
+                                                        batch_size=1,
+                                                        verbose=0)
+
+                                if isinstance(loss_y, list):
+                                    loss_y = loss_y[0]
+                                                                        
+                                # Get loss_h
+                                loss_h = model.evaluate(train_h_inputs,
+                                                        train_outputs,
+                                                        batch_size=1,
+                                                        verbose=0)
+
+                                if isinstance(loss_h, list):
+                                    loss_h = loss_h[0]
+
+                                loss_h = -loss_h  # This minus is because the Xent of the h in the loss is -
+
+                                if self.params_training['verbose'] > 0:
+                                    sys.stdout.write(u"Update %d. loss_y: %s - loss_h: %s \n" % (updates, str(loss_y), str(loss_h)))
+                                    sys.stdout.flush()
+
+                                if loss_y > loss_h:
+                                    model.optimizer.set_lr(self.params_training['additional_training_settings'].get('lr_hyp', self.params_training['lr']))
+                                    model.fit(x=train_h_inputs,
+                                              y=train_outputs,
+                                              batch_size=min(self.params_training['batch_size'], len(x)))
+                                    self.n_updates += 1
+                                updates += 1
                     # We are optimizing towards an MT metric (BLEU or TER)
                     if self.params_prediction.get('optimizer_regularizer').lower() == 'bleu' or \
                             self.params_prediction.get('optimizer_regularizer').lower() == 'ter':
@@ -470,8 +545,7 @@ class OnlineTrainer:
                         # Build the training inputs
                         train_inputs = [x, state_below_y, y,
                                         np.array([max(1e-8, 1. - score)]),
-                                        np.array([self.params_training['additional_training_settings'].get('lambda',
-                                                                                                           0.5)])]
+                                        np.array([self.params_training['additional_training_settings'].get('lambda', 0.5)])]
 
                         train_outputs = np.zeros((y.shape[0], 1), dtype='float32')
                         # Fit!
@@ -487,8 +561,11 @@ class OnlineTrainer:
                                   class_weight=None,
                                   sample_weight=None,
                                   initial_epoch=0)
-                        self.n_updates += 1
-                    else:
+                        self.n_updates += loss
+                    elif 'minmax_categorical_crossentropy' != self.params_training.get('loss').keys()[0]:
+                        # TODO: Organize losses /optimizers better!
+                        # Dummy outputs for our dummy loss
+                        train_outputs = np.zeros((train_inputs[0].shape[0], 1), dtype='float32')
                         model.fit(x=train_inputs,
                                   y=train_outputs,
                                   batch_size=min(self.params_training['batch_size'], train_inputs[0].shape[0]),
@@ -501,7 +578,7 @@ class OnlineTrainer:
                                   class_weight=None,
                                   sample_weight=None,
                                   initial_epoch=0)
-                        self.n_updates += 1
+                        self.n_updates += loss
                 else:
                     # Classical setup: We can train the TranslationModel directly
                     # We can include MT metrics as a LR modifier
@@ -518,9 +595,7 @@ class OnlineTrainer:
 
                         # Adjust LR for the current sample according to its value of TER/BLEU
                         model.model.optimizer.set_lr(self.params_training['lr'] *
-                                                     self.params_training['additional_training_settings'].get('lambda',
-                                                                                                              0.5) *
-                                                     score)
+                                                     self.params_training['additional_training_settings'].get('lambda', 0.5) * score)
 
                     params = copy.copy(self.params_training)
                     # Remove unnecessary parameters
@@ -737,8 +812,10 @@ class OnlineTrainer:
                                    'eval_on_epochs': True,
                                    'each_n_epochs': 1,
                                    'start_eval_on_epoch': 0,
-                                   'additional_training_settings': {'k': 1, 'tau': 1,
-                                                                    'c': 0.5, 'd': 0.5,
+                                   'additional_training_settings': {'k': 1,
+                                                                    'tau': 1,
+                                                                    'c': 0.5,
+                                                                    'd': 0.5,
                                                                     'lambda': 0.5
                                                                     }
                                    }
