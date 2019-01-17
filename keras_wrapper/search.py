@@ -481,7 +481,7 @@ def interactive_beam_search(model, X, params, return_alphas=False, model_ensembl
                 # if excluded words:
                 if excluded_words is not None:
                     allowed_log_probs = copy.copy(log_probs)
-                    allowed_log_probs[:, excluded_words] = -np.inf
+                    allowed_log_probs[:, excluded_words] = -cp.inf
 
                 # If word is fixed, we only consider this hypothesis
                 if ii + forward_steps in fixed_words:
@@ -490,10 +490,10 @@ def interactive_beam_search(model, X, params, return_alphas=False, model_ensembl
                     costs = cp.array(hyp_scores_)
                 else:
                     # Decypher flatten indices
-                    next_costs = cp.array(hyp_scores_)[:, None] - log_probs
+                    next_costs = hyp_scores_[:, None] - log_probs
                     flat_next_costs = next_costs.flatten()
                     # Find the best options by calling argsort of flatten array
-                    ranks_flat = cp.argsort(cand_flat)[:n_samples_]
+                    ranks_flat = cp.argsort(flat_next_costs)[:n_samples_]
                     voc_size = probs.shape[1]
                     trans_indices = ranks_flat / voc_size  # index of row
                     word_indices = ranks_flat % voc_size  # index of col
@@ -505,6 +505,12 @@ def interactive_beam_search(model, X, params, return_alphas=False, model_ensembl
                         allowed_trans_indices = allowed_ranks_flat / voc_size  # index of row
                         allowed_word_indices = allowed_ranks_flat % voc_size  # index of col
                         allowed_costs = allowed_flat_next_costs[allowed_ranks_flat]
+
+                if cupy:
+                    trans_indices = cp.asnumpy(trans_indices)
+                    word_indices = cp.asnumpy(word_indices)
+                    if ret_alphas:
+                        alphas = cp.asnumpy(alphas)
 
                 # Form a beam for the next iteration
                 new_hyp_samples = []
@@ -532,6 +538,7 @@ def interactive_beam_search(model, X, params, return_alphas=False, model_ensembl
                     hyp_scores_.append(new_hyp_scores[idx])
                     if ret_alphas:
                         hyp_alphas_.append(new_hyp_alphas[idx])
+                hyp_scores_ = cp.array(np.asarray(hyp_scores_, dtype='float32'), dtype='float32')
 
                 # Form a beam of allowed hypos for the final evaluation
                 if excluded_words is not None:
@@ -578,7 +585,6 @@ def interactive_beam_search(model, X, params, return_alphas=False, model_ensembl
                 if ret_alphas:
                     forward_alphas[forward_steps] = hyp_alphas_
                 forward_state_belows[forward_steps] = state_below
-                forward_prev_outs[forward_steps] = prev_outs
                 if params['optimized_search'] and ii > 0:
                     # filter next search inputs w.r.t. remaining samples
                     if model_ensemble:
@@ -589,6 +595,7 @@ def interactive_beam_search(model, X, params, return_alphas=False, model_ensembl
                     else:
                         for idx_vars in range(len(prev_out)):
                             prev_out[idx_vars] = prev_out[idx_vars][indices_alive_]
+                forward_prev_outs[forward_steps] = prev_out
 
             # We get the beam which contains the best hypothesis
             best_n_words = -1
@@ -635,7 +642,7 @@ def interactive_beam_search(model, X, params, return_alphas=False, model_ensembl
                 if start_pos > -1:  # Segment completely included in the partial hypothesis
                     ii_counter = start_pos
                     case = 1
-                    # logger.log(4, "Detected case 1: Segment included in hypothesis (position %d)" % ii_counter)
+                    # logger.debug("Detected case 1: Segment included in hypothesis (position %d)" % ii_counter)
                 else:
                     for i in range(len(best_hyp)):
                         if any(map(lambda x: x == best_hyp[i:], isle_prefixes)):
@@ -644,12 +651,12 @@ def interactive_beam_search(model, X, params, return_alphas=False, model_ensembl
                             overlapping_position = i
                             stop = True
                             case = 2
-                            # logger.log(4, "Detected case 2: Segment overlapped (position %d)" % ii_counter)
+                            # logger.debug(4, "Detected case 2: Segment overlapped (position %d)" % ii_counter)
                             break
 
                 if ii_counter == ii + best_n_words:
                     #  Segment not included nor overlapped. We should put the segment after the partial hypothesis
-                    # logger.log(4, "Detected case 0: Segment not included nor overlapped")
+                    # logger.debug("Detected case 0: Segment not included nor overlapped")
                     case = 0
                     stop = True
                     # ii_counter -= 1
@@ -660,7 +667,7 @@ def interactive_beam_search(model, X, params, return_alphas=False, model_ensembl
                 if ret_alphas:
                     hyp_alphas = []
                 state_below = []
-                prev_outs = [[]] * n_models
+                prev_out = [[]] * n_models
                 forward_indices_compatible = []
 
                 # Form a beam with those hypotheses compatible with best_hyp
@@ -692,20 +699,13 @@ def interactive_beam_search(model, X, params, return_alphas=False, model_ensembl
                                 hyp_alphas.append(forward_alphas[best_n_words_index][beam_index])
                             state_below.append(forward_state_belows[best_n_words_index][beam_index])
                     # logger.log(3, "forward_indices_compatible" + str(forward_indices_compatible))
-                    for n_model in range(n_models):
-                        prev_outs[n_model] = [[]] * len(forward_prev_outs[best_n_words_index][n_model])
-                        # filter next search inputs w.r.t. remaining samples
-                        for idx_vars in range(len(forward_prev_outs[best_n_words_index][n_model])):
-                            prev_outs[n_model][idx_vars] = forward_prev_outs[best_n_words_index][n_model][idx_vars][
-                                forward_indices_compatible]
                     if len(forward_indices_compatible) == 0:
                         hyp_samples = forward_hyp_trans[best_n_words_index]
                         hyp_scores = forward_hyp_scores[best_n_words_index]
                         if ret_alphas:
                             hyp_alphas = forward_alphas[best_n_words_index]
                         state_below = forward_state_belows[best_n_words_index]
-                        prev_outs = forward_prev_outs[best_n_words_index]
-                    state_below = np.array(state_below)
+                        prev_out = forward_prev_outs[best_n_words_index]
                 if case == 1:
                     #  The segment is included in the hypothesis
                     # logger.log(3, "Treating case 1: The segment is included in the hypothesis")
@@ -729,14 +729,7 @@ def interactive_beam_search(model, X, params, return_alphas=False, model_ensembl
                             if ret_alphas:
                                 hyp_alphas.append(forward_alphas[best_n_words_index][beam_index])
                             state_below.append(forward_state_belows[best_n_words_index][beam_index])
-                    state_below = np.array(state_below)
                     # logger.log(2, "forward_indices_compatible" + str(forward_indices_compatible))
-                    for n_model in range(n_models):
-                        prev_outs[n_model] = [[]] * len(forward_prev_outs[best_n_words_index][n_model])
-                        # filter next search inputs w.r.t. remaining samples
-                        for idx_vars in range(len(forward_prev_outs[best_n_words_index][n_model])):
-                            prev_outs[n_model][idx_vars] = forward_prev_outs[best_n_words_index][n_model][idx_vars][
-                                forward_indices_compatible]
                 if case == 2:
                     #  The segment is overlapped with the hypothesis
                     # logger.log(3, "Treating case 2: The segment is overlapped with the hypothesis")
@@ -758,14 +751,14 @@ def interactive_beam_search(model, X, params, return_alphas=False, model_ensembl
                             if ret_alphas:
                                 hyp_alphas.append(forward_alphas[best_n_words_index][beam_index])
                             state_below.append(forward_state_belows[best_n_words_index][beam_index])
-                    state_below = np.array(state_below)
-                    # logger.log(2, "forward_indices_compatible" + str(forward_indices_compatible))
-                    for n_model in range(n_models):
-                        prev_outs[n_model] = [[]] * len(forward_prev_outs[best_n_words_index][n_model])
-                        # filter next search inputs w.r.t. remaining samples
-                        for idx_vars in range(len(forward_prev_outs[best_n_words_index][n_model])):
-                            prev_outs[n_model][idx_vars] = forward_prev_outs[best_n_words_index][n_model][idx_vars][
-                                forward_indices_compatible]
+                state_below = np.array(state_below)
+                for n_model in range(n_models):
+                    prev_out[n_model] = [[]] * len(forward_prev_outs[best_n_words_index][n_model])
+                    # filter next search inputs w.r.t. remaining samples
+                    for idx_vars in range(len(forward_prev_outs[best_n_words_index][n_model])):
+                        prev_out[n_model][idx_vars] = forward_prev_outs[best_n_words_index][n_model][idx_vars][forward_indices_compatible]
+
+                hyp_scores = cp.array(np.asarray(hyp_scores, dtype='float32'), dtype='float32')
 
                 for word in next_isle:
                     if fixed_words.get(ii_counter) is None:
