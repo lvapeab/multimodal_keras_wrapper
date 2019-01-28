@@ -377,11 +377,9 @@ class OnlineTrainer:
                     # With custom losses, we'll probably use the hypothesis as training sample -> Convert to one-hot
                     # Tensors for computing p(h_i|x)
 
-                    if 'kl_diff' == self.params_training.get('loss') or \
-                                    'weighted_log_diff' == self.params_training.get('loss').keys()[0] or \
-                                    'pas_weighted_log_diff' == self.params_training.get('loss').keys()[0] or \
-                                    'minmax_categorical_crossentropy' == self.params_training.get('loss').keys()[0] or \
-                                    'log_prob_kl_diff' == self.params_training.get('loss').keys()[0]:
+                    if 'kl_diff' == self.params_training.get('loss') or 'weighted_log_diff' == self.params_training.get('loss').keys()[0] or \
+                        'pas_weighted_log_diff' == self.params_training.get('loss').keys()[0] or \
+                            'minmax_categorical_crossentropy' == self.params_training.get('loss').keys()[0] or 'log_prob_kl_diff' == self.params_training.get('loss').keys()[0]:
                         y, hyp, state_below_y, state_below_h, mask_y, mask_h = equalize_sentences(y[0],
                                                                                                   trans_indices,
                                                                                                   same_length=True,
@@ -415,16 +413,12 @@ class OnlineTrainer:
                         if 'pas_weighted_log_diff' == self.params_training.get('loss').keys()[0]:
                             # The PAS algorithm requires to switch the loss subderivative to 1. or 0.
                             # Compute loss y
-                            train_inputs_y = [x, state_below_y, state_below_h,
-                                            np.asarray([0.])] + [y, hyp, mask_y, mask_h]
-                            loss_y = model.evaluate(train_inputs_y,
-                                                    np.zeros((y.shape[0], 1), dtype='float32'), batch_size=1, verbose=0)
+                            train_inputs_y = [x, state_below_y, state_below_h, np.asarray([0.])] + [y, hyp, mask_y, mask_h]
+                            loss_y = model.evaluate(train_inputs_y, np.zeros((y.shape[0], 1), dtype='float32'), batch_size=1, verbose=0)
 
                             # Compute loss h
-                            train_inputs_h = [x, state_below_h, state_below_h,
-                                            np.asarray([0.])] + [hyp, hyp, mask_h, mask_h]
-                            loss_h = model.evaluate(train_inputs_h,
-                                                    np.zeros((y.shape[0], 1), dtype='float32'), batch_size=1, verbose=0)
+                            train_inputs_h = [x, state_below_h, state_below_h, np.asarray([0.])] + [hyp, hyp, mask_h, mask_h]
+                            loss_h = model.evaluate(train_inputs_h, np.zeros((y.shape[0], 1), dtype='float32'), batch_size=1, verbose=0)
                             loss = 0. if loss_y < loss_h else 1.
 
                         else:
@@ -471,18 +465,15 @@ class OnlineTrainer:
                             loss_y = 1.
                             loss_h = 0.
                             updates = 0
-                            while loss_y - loss_h > 0 and \
-                                            updates < self.params_training['additional_training_settings'].get('k', 1):
+                            while loss_y - loss_h > 0 and updates < self.params_training['additional_training_settings'].get('k', 1):
                                 model.optimizer.set_lr(self.params_training['lr'])
                                 # Xent on references -> adjust loss weights
                                 train_y_inputs = [x, state_below_y, state_below_h,
-                                                 np.asarray([1.]), np.asarray([0.])] + \
-                                                 [y, hyp, mask_y, mask_h]
+                                                  np.asarray([1.]), np.asarray([0.])] + [y, hyp, mask_y, mask_h]
 
                                 # Xent on hypotheses -> adjust loss weights
                                 train_h_inputs = [x, state_below_y, state_below_h,
-                                                 np.asarray([0.]), np.asarray([-1.])] + \
-                                                 [y, hyp, mask_y, mask_h]
+                                                  np.asarray([0.]), np.asarray([-1.])] + [y, hyp, mask_y, mask_h]
                                 # Dummy outputs for our dummy loss
                                 train_outputs = np.zeros((train_y_inputs[0].shape[0], 1), dtype='float32')
 
@@ -508,7 +499,7 @@ class OnlineTrainer:
 
                                 if isinstance(loss_y, list):
                                     loss_y = loss_y[0]
-                                                                        
+
                                 # Get loss_h
                                 loss_h = model.evaluate(train_h_inputs,
                                                         train_outputs,
