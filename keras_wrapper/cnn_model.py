@@ -628,7 +628,8 @@ class Model_Wrapper(object):
                                                  'output_max_length_depending_on_x_factor': 3,
                                                  'output_min_length_depending_on_x': False,
                                                  'output_min_length_depending_on_x_factor': 2,
-                                                 'attend_on_output': False
+                                                 'attend_on_output': False,
+                                                 'glossary': None
                                                  }
         self.default_predict_params = {'batch_size': 50,
                                        'n_parallel_loaders': 1,

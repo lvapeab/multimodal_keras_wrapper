@@ -154,7 +154,8 @@ class BeamSearchEnsemble:
                           'output_max_length_depending_on_x_factor': 3,
                           'output_min_length_depending_on_x': False,
                           'output_min_length_depending_on_x_factor': 2,
-                          'attend_on_output': False
+                          'attend_on_output': False,  # Set to True if the model is a Transformer-like
+                          'glossary': None
                           }
         params = checkParameters(self.params, default_params)
         predictions = dict()
@@ -361,7 +362,9 @@ class BeamSearchEnsemble:
                           'output_max_length_depending_on_x': False,
                           'output_max_length_depending_on_x_factor': 3,
                           'output_min_length_depending_on_x': False,
-                          'output_min_length_depending_on_x_factor': 2
+                          'output_min_length_depending_on_x_factor': 2,
+                          'attend_on_output': False,  # Set to True if the model is a Transformer-like
+                          'glossary': None
                           }
         params = checkParameters(self.params, default_params)
         params['pad_on_batch'] = self.dataset.pad_on_batch[params['dataset_inputs'][-1]]
@@ -569,7 +572,9 @@ class BeamSearchEnsemble:
                           'output_max_length_depending_on_x': False,
                           'output_max_length_depending_on_x_factor': 3,
                           'output_min_length_depending_on_x': False,
-                          'output_min_length_depending_on_x_factor': 2
+                          'output_min_length_depending_on_x_factor': 2,
+                          'attend_on_output': False,  # Set to True if the model is a Transformer-like
+                          'glossary': None
                           }
         params = checkParameters(self.params, default_params)
 
@@ -730,7 +735,9 @@ class BeamSearchEnsemble:
                           'output_max_length_depending_on_x': False,
                           'output_max_length_depending_on_x_factor': 3,
                           'output_min_length_depending_on_x': False,
-                          'output_min_length_depending_on_x_factor': 2
+                          'output_min_length_depending_on_x_factor': 2,
+                          'attend_on_output': False,  # Set to True if the model is a Transformer-like
+                          'glossary': None
                           }
         params = checkParameters(self.params, default_params)
 
@@ -931,7 +938,8 @@ class InteractiveBeamSearchSampler:
                           'output_max_length_depending_on_x_factor': 3,
                           'output_min_length_depending_on_x': False,
                           'output_min_length_depending_on_x_factor': 2,
-                          'attend_on_output': False
+                          'attend_on_output': False,  # Set to True if the model is a Transformer-like
+                          'glossary': None
                           }
         params = checkParameters(self.params, default_params)
         params['pad_on_batch'] = self.dataset.pad_on_batch[params['dataset_inputs'][-1]]
