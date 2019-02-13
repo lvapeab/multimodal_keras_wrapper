@@ -777,7 +777,9 @@ class OnlineTrainer:
                                      'output_min_length_depending_on_x_factor': 2,
                                      'detokenize_f': 'detokenize_none',
                                      'n_best_optimizer': False,
-                                     'optimizer_regularizer': 'TER'
+                                     'optimizer_regularizer': 'TER',
+                                     'attend_on_output': False,  # Set to True if the model is a Transformer-like
+                                     'glossary': None
                                      }
         default_params_training = {'batch_size': 50,
                                    'use_custom_loss': False,
