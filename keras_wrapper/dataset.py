@@ -2762,8 +2762,9 @@ class Dataset(object):
 
         return V
 
-    def loadVideoFeatures(self, idx_videos, data_id, set_name, max_len, normalization_type, normalization, feat_len,
-                          external=False, data_augmentation=True):
+    def loadVideoFeatures(self,
+                          idx_videos, data_id, set_name, max_len, normalization_type, normalization, feat_len,
+                          external=False, data_augmentation=False):
         """
 
         :param idx_videos: indices of the videos in the complete list of the current set_name
@@ -2795,11 +2796,12 @@ class Dataset(object):
                 # Check if the filename includes the extension
                 feat = np.load(feat)
 
-                if data_augmentation and 'noise' in data_augmentation_types:
-                    noise_mean = 0.0
-                    noise_dev = 0.01
-                    noise = np.random.normal(noise_mean, noise_dev, feat.shape)
-                    feat += noise
+                if data_augmentation:
+                    if data_augmentation_types is not None and 'noise' in data_augmentation_types:
+                        noise_mean = 0.0
+                        noise_dev = 0.01
+                        noise = np.random.normal(noise_mean, noise_dev, feat.shape)
+                        feat += noise
 
                 if normalization:
                     if normalization_type == 'L2':
@@ -4025,10 +4027,14 @@ class Dataset(object):
 
         return [X, Y]
 
-    def getXY_FromIndices(self, set_name, k, normalization_type='(-1)-1',
-                          normalization=True, meanSubstraction=False,
+    def getXY_FromIndices(self, set_name, k,
+                          normalization_type='(-1)-1',
+                          normalization=True,
+                          meanSubstraction=False,
                           dataAugmentation=True,
-                          wo_da_patch_type='whole', da_patch_type='resize_and_rndcrop', da_enhance_list=None):
+                          wo_da_patch_type='whole',
+                          da_patch_type='resize_and_rndcrop',
+                          da_enhance_list=None):
         """
         Gets the [X,Y] pairs for the samples in positions 'k' in the desired set.
         :param set_name: 'train', 'val' or 'test' set
@@ -4213,12 +4219,17 @@ class Dataset(object):
 
         return [X, Y]
 
-    def getX_FromIndices(self, set_name, k, normalization_type='(-1)-1',
-                         normalization=True, meanSubstraction=False,
+    def getX_FromIndices(self,
+                         set_name, k,
+                         normalization_type='(-1)-1',
+                         normalization=True,
+                         meanSubstraction=False,
                          dataAugmentation=True,
-                         wo_da_patch_type='whole', da_patch_type='resize_and_rndcrop', da_enhance_list=None):
+                         wo_da_patch_type='whole',
+                         da_patch_type='resize_and_rndcrop',
+                         da_enhance_list=None):
         """
-        Gets the [X,Y] pairs for the samples in positions 'k' in the desired set.
+        Gets the [X] elements for the samples in positions 'k' in the desired set.
         :param set_name: 'train', 'val' or 'test' set
         :param k: positions of the desired samples
         # 'raw-image', 'video', 'image-features' and 'video-features'-related parameters

@@ -254,7 +254,7 @@ def interactive_beam_search(model, X, params, return_alphas=False, model_ensembl
     if isles is not None:
         # unfixed_isles = filter(lambda x: not is_sublist(x[1], fixed_words.values()),
         # [segment for segment in isles])
-        fixed_words_v = copy.copy(fixed_words.values())
+        fixed_words_v = copy.copy(list(fixed_words.values()))
         unfixed_isles = []
         for segment in isles:
             if is_sublist(segment[1], fixed_words_v):
@@ -362,7 +362,7 @@ def interactive_beam_search(model, X, params, return_alphas=False, model_ensembl
                 ranks_flat = cp.argsort(cand_flat)[:(k - dead_k)]
                 # Decypher flatten indices
                 voc_size = log_probs.shape[1]
-                trans_indices = ranks_flat / voc_size  # index of row
+                trans_indices = ranks_flat // voc_size  # index of row
                 word_indices = ranks_flat % voc_size  # index of col
                 costs = cand_flat[ranks_flat]
             best_cost = costs[0]
@@ -495,14 +495,14 @@ def interactive_beam_search(model, X, params, return_alphas=False, model_ensembl
                     # Find the best options by calling argsort of flatten array
                     ranks_flat = cp.argsort(flat_next_costs)[:n_samples_]
                     voc_size = probs.shape[1]
-                    trans_indices = ranks_flat / voc_size  # index of row
+                    trans_indices = ranks_flat // voc_size  # index of row
                     word_indices = ranks_flat % voc_size  # index of col
                     costs = flat_next_costs[ranks_flat]
                     if excluded_words is not None:
                         allowed_next_costs = cp.array(hyp_scores_)[:, None] - allowed_log_probs
                         allowed_flat_next_costs = allowed_next_costs.flatten()
                         allowed_ranks_flat = cp.argsort(allowed_flat_next_costs)[:n_samples_]
-                        allowed_trans_indices = allowed_ranks_flat / voc_size  # index of row
+                        allowed_trans_indices = allowed_ranks_flat // voc_size  # index of row
                         allowed_word_indices = allowed_ranks_flat % voc_size  # index of col
                         allowed_costs = allowed_flat_next_costs[allowed_ranks_flat]
 
