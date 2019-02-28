@@ -57,6 +57,23 @@ def common_prefix(s1, s2):
             return i, s1[:i]
     return i + 1, s1[:i + 1]
 
+def common_prefixes(s1, s2):
+    """
+    Gets the common prefix between a string and a list of strings
+    :param s1: String 1
+    :param s2: List of string 2
+    :return: Common prefix
+    """
+    max_len = -1
+    arg_max_len = ''
+    for i in range(len(s2)):
+        common_pos, common_chars = common_prefix(s1, s2[i])
+        if common_pos > max_len:
+            max_commmon_idx = i
+            max_len = common_pos
+            arg_max_len = common_chars
+    return max_commmon_idx, max_len, arg_max_len
+
 
 def longest_common_suffix(list1, list2):
     """
@@ -126,6 +143,8 @@ def subfinder(pattern, mylist):
             return pattern, start_pos
     return [], -1
 
+def common_segments(s1, s2):
+    raise (NotImplementedError, 'The function "common_segments" is still unimplemented.')
 
 def compute_mouse_movements(isles, prev_isles, last_checked_index):
     """
