@@ -57,6 +57,7 @@ def common_prefix(s1, s2):
             return i, s1[:i]
     return i + 1, s1[:i + 1]
 
+
 def common_prefixes(s1, s2):
     """
     Gets the common prefix between a string and a list of strings
@@ -143,8 +144,10 @@ def subfinder(pattern, mylist):
             return pattern, start_pos
     return [], -1
 
+
 def common_segments(s1, s2):
     raise (NotImplementedError, 'The function "common_segments" is still unimplemented.')
+
 
 def compute_mouse_movements(isles, prev_isles, last_checked_index):
     """
