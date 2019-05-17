@@ -826,7 +826,7 @@ class InteractiveBeamSearchSampler:
                                   sys.stdout.isatty()) or
                                  'ipykernel' in sys.modules)
         if self.verbose > 0:
-            logging.info('<<< "Optimized search: %s >>>' % str(self.optimized_search))
+            logger.info('<<< "Optimized search: %s >>>' % str(self.optimized_search))
 
     # PREDICTION FUNCTIONS: Functions for making prediction on input samples
     def predict_cond_optimized(self, X, states_below, params, ii, prev_outs):

@@ -9,6 +9,8 @@ import numpy as np
 from keras_wrapper.cnn_model import Model_Wrapper
 from keras_wrapper.extra.read_write import list2file
 from keras_wrapper.utils import indices_2_one_hot, decode_predictions_beam_search, one_hot_2_indices
+logging.basicConfig(level=logging.INFO, format='[%(asctime)s] %(message)s', datefmt='%d/%m/%Y %H:%M:%S')
+logger = logging.getLogger(__name__)
 
 
 def equalize_sentences(y, h, same_length=True, y_as_one_hot=True, h_as_one_hot=True, vocabulary_len_y=None,
@@ -179,7 +181,7 @@ class OnlineTrainer:
                 list2file(self.params_prediction['store_hypotheses'], [hypothesis_to_write], permission='a')
 
             if self.verbose > 2:
-                logging.info(u'Hypothesis: %s' % hypothesis_to_write)
+                logger.info(u'Hypothesis: %s' % hypothesis_to_write)
         maxlen_hypothesis_reference = max(len(trans_indices), len(y[0]))
 
         # If we are working with an n-best list, we'll probably have to decode it

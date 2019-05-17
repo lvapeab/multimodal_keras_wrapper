@@ -4,8 +4,7 @@ import numpy as np
 import logging
 from keras_wrapper.extra.isles_utils import *
 
-logging.basicConfig(level=logging.DEBUG,
-                    format='[%(asctime)s] %(message)s', datefmt='%d/%m/%Y %H:%M:%S')
+logging.basicConfig(level=logging.INFO, format='[%(asctime)s] %(message)s', datefmt='%d/%m/%Y %H:%M:%S')
 logger = logging.getLogger(__name__)
 
 try:
