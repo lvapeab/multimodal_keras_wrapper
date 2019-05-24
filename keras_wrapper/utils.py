@@ -1222,6 +1222,7 @@ def print_dict(d, header=''):
     obj_str += '}'
     return obj_str
 
+
 def equalize_sentences(y, h, same_length=True, y_as_one_hot=True, h_as_one_hot=True, vocabulary_len_y=None,
                        vocabulary_len_h=None, compute_masks=True, fixed_length=-1, return_states_below=True, null_idx=2):
     """
@@ -1297,4 +1298,3 @@ def equalize_sentences(y, h, same_length=True, y_as_one_hot=True, h_as_one_hot=T
             return equalized_y, equalized_h, mask_y, mask_h
         else:
             return equalized_y, equalized_h
-
