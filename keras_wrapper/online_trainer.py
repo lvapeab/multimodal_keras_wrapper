@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
 from __future__ import print_function
+from six import iteritems
 
 import copy
 import logging
@@ -819,14 +820,14 @@ class OnlineTrainer:
         params = dict()
 
         # Check input parameters' validity
-        for key, val in input_params.iteritems():
+        for key, val in iteritems(input_params):
             if key in valid_params:
                 params[key] = val
             else:
-                logging.warn("Parameter '" + key + "' is not a valid parameter.")
+                logger.warning("Parameter '" + key + "' is not a valid parameter.")
 
         # Use default parameters if not provided
-        for key, default_val in default_params.iteritems():
+        for key, default_val in iteritems(default_params):
             if key not in params:
                 params[key] = default_val
 
