@@ -1221,3 +1221,80 @@ def print_dict(d, header=''):
     obj_str += '\n'
     obj_str += '}'
     return obj_str
+
+def equalize_sentences(y, h, same_length=True, y_as_one_hot=True, h_as_one_hot=True, vocabulary_len_y=None,
+                       vocabulary_len_h=None, compute_masks=True, fixed_length=-1, return_states_below=True, null_idx=2):
+    """
+    Equalizes (max length) the sentences y and h.
+    :param y: Sentence 1 to equalize (e.g. reference). As a list of indices.
+    :param h: Sentence 2 to equalize (e.g. hypothesis). As a list of indices.
+    :param y_as_one_hot: Return sentence y as a one-hot-vector.
+    :param h_as_one_hot: Return sentence y as a one-hot-vector.
+    :param vocabulary_len_y: Vocabulary for converting y to a one-hot-vector.
+    :param vocabulary_len_h: Vocabulary for converting h to a one-hot-vector.
+    :param fixed_length: Fix the length of both sentences to this number (-1 means max(len(y), len(h))).
+    :param return_states_below: Whether to compute the states below of y and h.
+    :return: Equalized y, h (and optionally state_below_y, state_below_h)
+    """
+    if y_as_one_hot:
+        assert vocabulary_len_y is not None, 'I need the size of the vocabulary for converting y to one hot!'
+    if h_as_one_hot:
+        assert vocabulary_len_h is not None, 'I need the size of the vocabulary for converting h to one hot!'
+
+    if np.ndim(y) == 2:
+        y = one_hot_2_indices([y])[0]
+    if np.ndim(h) == 2:
+        h = one_hot_2_indices([h])[0]
+
+    if fixed_length > -1:
+        maxlen_y = fixed_length
+        maxlen_h = fixed_length
+    else:
+        if same_length:
+            maxlen_y = max(len(y), len(h))
+            maxlen_h = max(len(y), len(h))
+        else:
+            maxlen_y = len(y)
+            maxlen_h = len(h)
+
+    if compute_masks:
+        mask_y = np.zeros(maxlen_y, dtype='int8')
+        mask_h = np.zeros(maxlen_h, dtype='int8')
+
+    if len(h) != maxlen_h:
+        equalized_h = np.zeros(maxlen_h, dtype='int32')
+        equalized_h[:len(h)] = h[:maxlen_h]
+    else:
+        equalized_h = h
+
+    if len(y) != maxlen_y:
+        equalized_y = np.zeros(maxlen_y, dtype='int32')
+        equalized_y[:len(y)] = y[:maxlen_y]
+    else:
+        equalized_y = y
+
+    if return_states_below:
+        state_below_y = np.asarray(np.append(null_idx, equalized_y[:-1]))
+        state_below_h = np.asarray(np.append(null_idx, equalized_h[:-1]))
+
+    if compute_masks:
+        mask_y[:len(y)] = 1
+        mask_h[:len(h)] = 1
+
+    if y_as_one_hot:
+        equalized_y = np.array(indices_2_one_hot(equalized_y, vocabulary_len_y))
+
+    if h_as_one_hot:
+        equalized_h = np.array(indices_2_one_hot(equalized_h, vocabulary_len_h))
+
+    if return_states_below:
+        if compute_masks:
+            return equalized_y, equalized_h, state_below_y, state_below_h, mask_y, mask_h
+        else:
+            return equalized_y, equalized_h, state_below_y, state_below_h
+    else:
+        if compute_masks:
+            return equalized_y, equalized_h, mask_y, mask_h
+        else:
+            return equalized_y, equalized_h
+
