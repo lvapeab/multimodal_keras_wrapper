@@ -2,406 +2,70 @@
 from __future__ import print_function
 
 import math
+import os
 import shutil
 import sys
 import time
 import logging
+import numpy as np
+import copy
+from six import iteritems
+
 logging.basicConfig(level=logging.INFO, format='[%(asctime)s] %(message)s', datefmt='%d/%m/%Y %H:%M:%S')
 logger = logging.getLogger(__name__)
 
-if sys.version_info.major == 3:
-    import _pickle as pk
-else:
-    import cPickle as pk
-import cloudpickle as cloudpk
 import keras
+import keras.backend as K
 from keras.engine.training import Model
-from keras.layers import concatenate, MaxPooling2D, ZeroPadding2D, AveragePooling2D, Dense, Dropout, Flatten, Input, \
-    Activation, BatchNormalization
-from keras.layers.advanced_activations import PReLU
-from keras.models import Sequential, model_from_json, load_model
-from keras.optimizers import *
-from keras.regularizers import l2
-from keras.utils.layer_utils import print_summary
+from keras.models import Sequential, model_from_json
+from keras.optimizers import Adam, Adadelta, Adagrad, Adamax, Nadam, RMSprop, SGD, TFOptimizer
+
 from keras_wrapper.dataset import Data_Batch_Generator, Homogeneous_Data_Batch_Generator, Parallel_Data_Batch_Generator
-from keras_wrapper.extra.callbacks import *
-from keras_wrapper.extra.read_write import file2list
+from keras_wrapper.extra.callbacks import LearningRateReducer, EarlyStopping, StoreModelWeightsOnEpochEnd
+from keras_wrapper.extra.read_write import file2list, create_dir_if_not_exists
 from keras_wrapper.utils import one_hot_2_indices, decode_predictions, decode_predictions_one_hot, \
-    decode_predictions_beam_search, replace_unknown_words, sampling, categorical_probas_to_classes, checkParameters, print_dict
+    decode_predictions_beam_search, sampling, categorical_probas_to_classes, checkParameters, \
+    print_dict
 from keras_wrapper.search import beam_search
+
+# These imports must be kept to ensure backwards compatibility
+from keras_wrapper.saving import saveModel, loadModel, updateModel, transferWeights
 
 # General setup of libraries
 try:
     import cupy as cp
 except:
     import numpy as cp
+
     logger.info('<<< Cupy not available. Using numpy. >>>')
 
-if int(keras.__version__.split('.')[0]) == 1:
-    from keras.layers import Concat as Concatenate
-    from keras.layers import Convolution2D as Conv2D
-    from keras.layers import Deconvolution2D as Conv2DTranspose
-else:
-    from keras.layers import Concatenate
-    from keras.layers import Conv2D
-    from keras.layers import Conv2DTranspose
 
-
-# ------------------------------------------------------- #
-#       SAVE/LOAD
-#           External functions for saving and loading Model_Wrapper instances
-# ------------------------------------------------------- #
-
-def saveModel(model_wrapper, update_num, path=None, full_path=False, store_iter=False):
-    """
-    Saves a backup of the current Model_Wrapper object after being trained for 'update_num' iterations/updates/epochs.
-
-    :param model_wrapper: object to save
-    :param update_num: identifier of the number of iterations/updates/epochs elapsed
-    :param path: path where the model will be saved
-    :param full_path: Whether we save to the path of from path + '/epoch_' + update_num
-    :param store_iter: Whether we store the current update_num
-    :return: None
-    """
-    if not path:
-        path = model_wrapper.model_path
-
-    iteration = str(update_num)
-
-    if full_path:
-        if store_iter:
-            model_name = path + '_' + iteration
-        else:
-            model_name = path
-    else:
-        if store_iter:
-            model_name = path + '/update_' + iteration
-        else:
-            model_name = path + '/epoch_' + iteration
-
-    if not model_wrapper.silence:
-        logger.info("<<< Saving model to " + model_name + " ... >>>")
-
-    # Create models dir
-    if not os.path.isdir(path):
-        if not os.path.isdir(os.path.dirname(path)):
-            os.makedirs(os.path.dirname(path))
-
-    try:  # Try to save model at one time
-        model_wrapper.model.save(model_name + '.h5')
-    except Exception as e:  # Split saving in model structure / weights
-        logger.info(str(e))
-        # Save model structure
-        json_string = model_wrapper.model.to_json()
-        open(model_name + '_structure.json', 'w').write(json_string)
-        # Save model weights
-        model_wrapper.model.save_weights(model_name + '_weights.h5', overwrite=True)
-
-    # Save auxiliary models for optimized search
-    if model_wrapper.model_init is not None:
-        try:  # Try to save model at one time
-            model_wrapper.model_init.save(model_name + '_init.h5')
-        except Exception as e:  # Split saving in model structure / weights
-            logger.info(str(e))
-            # Save model structure
-            logger.info("<<< Saving model_init to " + model_name + "_structure_init.json... >>>")
-            json_string = model_wrapper.model_init.to_json()
-            open(model_name + '_structure_init.json', 'w').write(json_string)
-            # Save model weights
-            model_wrapper.model_init.save_weights(model_name + '_weights_init.h5', overwrite=True)
-
-    if model_wrapper.model_next is not None:
-        try:  # Try to save model at one time
-            model_wrapper.model_next.save(model_name + '_next.h5')
-        except Exception as e:  # Split saving in model structure / weights
-            logger.info(str(e))
-            # Save model structure
-            logger.info("<<< Saving model_next to " + model_name + "_structure_next.json... >>>")
-            json_string = model_wrapper.model_next.to_json()
-            open(model_name + '_structure_next.json', 'w').write(json_string)
-            # Save model weights
-            model_wrapper.model_next.save_weights(model_name + '_weights_next.h5', overwrite=True)
-
-    # Save additional information
-    backup_multi_gpu_model = None
-    if hasattr(model_wrapper, 'multi_gpu_model'):
-        backup_multi_gpu_model = model_wrapper.multi_gpu_model
-        setattr(model_wrapper, 'multi_gpu_model', None)
-
-    cloudpk.dump(model_wrapper, open(model_name + '_Model_Wrapper.pkl', 'wb'))
-    setattr(model_wrapper, 'multi_gpu_model', backup_multi_gpu_model)
-
-    if not model_wrapper.silence:
-        logger.info("<<< Model saved >>>")
-
-
-def loadModel(model_path, update_num, reload_epoch=True, custom_objects=None, full_path=False, compile_model=False):
-    """
-    Loads a previously saved Model_Wrapper object.
-
-    :param model_path: path to the Model_Wrapper object to load
-    :param update_num: identifier of the number of iterations/updates/epochs elapsed
-    :param reload_epoch: Whether we should load epochs or updates
-    :param custom_objects: dictionary of custom layers (i.e. input to model_from_json)
-    :param full_path: Whether we should load the path from model_name or from model_path directly.
-    :return: loaded Model_Wrapper
-    """
-    if not custom_objects:
-        custom_objects = dict()
-
-    t = time.time()
-    iteration = str(update_num)
-
-    if full_path:
-        model_name = model_path
-    else:
-        if reload_epoch:
-            model_name = model_path + "/epoch_" + iteration
-        else:
-            model_name = model_path + "/update_" + iteration
-
-    logger.info("<<< Loading model from " + model_name + "_Model_Wrapper.pkl ... >>>")
-    try:
-        logger.info("<<< Loading model from " + model_name + ".h5 ... >>>")
-        model = load_model(model_name + '.h5', custom_objects=custom_objects, compile=compile_model)
-    except Exception as e:
-        logger.info(str(e))
-        # Load model structure
-        logger.info("<<< Loading model from " + model_name + "_structure.json' ... >>>")
-        model = model_from_json(open(model_name + '_structure.json').read(), custom_objects=custom_objects)
-        # Load model weights
-        model.load_weights(model_name + '_weights.h5')
-
-    # Load auxiliary models for optimized search
-    if os.path.exists(model_name + '_init.h5') and os.path.exists(model_name + '_next.h5'):
-        loading_optimized = 1
-    elif os.path.exists(model_name + '_structure_init.json') and os.path.exists(
-            model_name + '_weights_init.h5') and os.path.exists(model_name + '_structure_next.json') and os.path.exists(
-            model_name + '_weights_next.h5'):
-        loading_optimized = 2
-    else:
-        loading_optimized = 0
-
-    if loading_optimized == 1:
-        logger.info("<<< Loading optimized model... >>>")
-        model_init = load_model(model_name + '_init.h5', custom_objects=custom_objects, compile=False)
-        model_next = load_model(model_name + '_next.h5', custom_objects=custom_objects, compile=False)
-
-    elif loading_optimized == 2:
-        # Load model structure
-        logger.info("\t <<< Loading model_init from " + model_name + "_structure_init.json ... >>>")
-        model_init = model_from_json(open(model_name + '_structure_init.json').read(),
-                                     custom_objects=custom_objects)
-        # Load model weights
-        model_init.load_weights(model_name + '_weights_init.h5')
-        # Load model structure
-        logger.info("\t <<< Loading model_next from " + model_name + "_structure_next.json ... >>>")
-        model_next = model_from_json(open(model_name + '_structure_next.json').read(), custom_objects=custom_objects)
-        # Load model weights
-        model_next.load_weights(model_name + '_weights_next.h5')
-
-    # Load Model_Wrapper information
-    try:
-        if sys.version_info.major == 3:
-            model_wrapper = pk.load(open(model_name + '_Model_Wrapper.pkl', 'rb'), encoding='latin1')
-        else:
-            model_wrapper = pk.load(open(model_name + '_Model_Wrapper.pkl', 'rb'))
-    except Exception as e:
-        # try:
-        logger.info(str(e))
-        if sys.version_info.major == 3:
-            model_wrapper = pk.load(open(model_name + '_CNN_Model.pkl', 'rb'), encoding='latin1')
-        else:
-            model_wrapper = pk.load(open(model_name + '_CNN_Model.pkl', 'rb'))
-        # except:
-        #    raise Exception(ValueError)
-
-    # Add logger for backwards compatibility (old pre-trained models) if it does not exist
-    model_wrapper.updateLogger()
-
-    model_wrapper.model = model
-    if loading_optimized != 0:
-        model_wrapper.model_init = model_init
-        model_wrapper.model_next = model_next
-        logger.info("<<< Optimized model loaded. >>>")
-    else:
-        model_wrapper.model_init = None
-        model_wrapper.model_next = None
-    logger.info("<<< Model loaded in %0.6s seconds. >>>" % str(time.time() - t))
-    return model_wrapper
-
-
-def updateModel(model, model_path, update_num, reload_epoch=True, full_path=False, compile_model=False):
-    """
-    Loads a the weights from files to a Model_Wrapper object.
-
-    :param model: Model_Wrapper object to update
-    :param model_path: path to the weights to load
-    :param update_num: identifier of the number of iterations/updates/epochs elapsed
-    :param reload_epoch: Whether we should load epochs or updates
-    :param full_path: Whether we should load the path from model_name or from model_path directly.
-    :return: updated Model_Wrapper
-    """
-    t = time.time()
-    model_name = model.name
-    iteration = str(update_num)
-
-    if not full_path:
-        if reload_epoch:
-            model_path = model_path + "/epoch_" + iteration
-        else:
-            model_path = model_path + "/update_" + iteration
-
-    logger.info("<<< Updating model " + model_name + " from " + model_path + " ... >>>")
-
-    try:
-        logger.info("<<< Updating model from " + model_path + ".h5 ... >>>")
-        model.model.set_weights(load_model(model_path + '.h5', compile=False).get_weights())
-
-    except Exception as e:
-        logger.info(str(e))
-        # Load model structure
-        logger.info("<<< Failed -> Loading model from " + model_path + "_weights.h5' ... >>>")
-        # Load model weights
-        model.model.load_weights(model_path + '_weights.h5')
-
-    # Load auxiliary models for optimized search
-    if os.path.exists(model_name + '_init.h5') and os.path.exists(model_name + '_next.h5'):
-        loading_optimized = 1
-    elif os.path.exists(model_name + '_weights_init.h5') and os.path.exists(model_name + '_weights_next.h5'):
-        loading_optimized = 2
-    else:
-        loading_optimized = 0
-
-    if loading_optimized != 0:
-        logger.info("<<< Updating optimized model... >>>")
-        if loading_optimized == 1:
-            logger.info("\t <<< Updating model_init from " + model_path + "_init.h5 ... >>>")
-            model.model_init.set_weights(load_model(model_path + '_init.h5', compile=False).get_weights())
-            logger.info("\t <<< Updating model_next from " + model_path + "_next.h5 ... >>>")
-            model.model_next.set_weights(load_model(model_path + '_next.h5', compile=False).get_weights())
-        elif loading_optimized == 2:
-            logger.info("\t <<< Updating model_init from " + model_path + "_structure_init.json ... >>>")
-            model.model_init.load_weights(model_path + '_weights_init.h5')
-            # Load model structure
-            logger.info("\t <<< Updating model_next from " + model_path + "_structure_next.json ... >>>")
-            # Load model weights
-            model.model_next.load_weights(model_path + '_weights_next.h5')
-
-    logger.info("<<< Model updated in %0.6s seconds. >>>" % str(time.time() - t))
-    return model
-
-
-def transferWeights(old_model, new_model, layers_mapping):
-    """
-    Transfers all existent layers' weights from an old model to a new model.
-
-    :param old_model: old version of the model, where the weights will be picked
-    :param new_model: new version of the model, where the weights will be transferred to
-    :param layers_mapping: mapping from old to new model layers
-    :return: new model with weights transferred
-    """
-
-    logger.info("<<< Transferring weights from models. >>>")
-
-    old_layer_dict = dict([(layer.name, [layer, idx]) for idx, layer in list(enumerate(old_model.model.layers))])
-    new_layer_dict = dict([(layer.name, [layer, idx]) for idx, layer in list(enumerate(new_model.model.layers))])
-
-    for lold, lnew in iteritems(layers_mapping):
-        # Check if layers exist in both models
-        if lold in old_layer_dict and lnew in new_layer_dict:
-
-            # Create dictionary name --> layer
-            old = old_layer_dict[lold][0].get_weights()
-            new = new_layer_dict[lnew][0].get_weights()
-
-            # Find weight sizes matchings for each layer (without repetitions)
-            new_shapes = [w.shape for w in new]
-            mapping_weights = dict()
-            for pos_old, wo in list(enumerate(old)):
-                old_shape = wo.shape
-                indices = [i for i, shp in enumerate(new_shapes) if shp == old_shape]
-                if indices:
-                    for ind in indices:
-                        if ind not in list(mapping_weights):
-                            mapping_weights[ind] = pos_old
-                            break
-
-            # Alert for any weight matrix not inserted to new model
-            for pos_old, wo in list(enumerate(old)):
-                if pos_old not in list(mapping_weights.values()):
-                    logger.info('  Pre-trained weight matrix of layer "' + lold +
-                                '" with dimensions ' + str(wo.shape) + ' can not be inserted to new model.')
-
-            # Alert for any weight matrix not modified
-            for pos_new, wn in list(enumerate(new)):
-                if pos_new not in list(mapping_weights):
-                    logger.info('  New model weight matrix of layer "' + lnew +
-                                '" with dimensions ' + str(wn.shape) + ' can not be loaded from pre-trained model.')
-
-            # Transfer weights for each layer
-            for new_idx, old_idx in iteritems(mapping_weights):
-                new[new_idx] = old[old_idx]
-            new_model.model.layers[new_layer_dict[lnew][1]].set_weights(new)
-
-        else:
-            logger.info('Can not apply weights transfer from "' + lold + '" to "' + lnew + '"')
-
-    logger.info("<<< Weights transferred successfully. >>>")
-
-    return new_model
-
-
-def read_layer_names(model, starting_name=None):
-    """
-        Reads the existent layers' names from a model starting after a layer specified by its name
-
-        :param model: model whose layers' names will be read
-        :param starting_name: name of the layer after which the layers' names will be read
-                              (if None, then all the layers' names will be read)
-        :return: list of layers' names
-        """
-
-    if starting_name is None:
-        read = True
-    else:
-        read = False
-
-    layers_names = []
-    for layer in model.layers:
-        if read:
-            layers_names.append(layer.name)
-        elif layer.name == starting_name:
-            read = True
-
-    return layers_names
-
-
-# ------------------------------------------------------- #
-#       MAIN CLASS
-# ------------------------------------------------------- #
 class Model_Wrapper(object):
     """
         Wrapper for Keras' models. It provides the following utilities:
             - Training visualization module.
-            - Set of already implemented CNNs for quick definition.
-            - Easy layers re-definition for finetuning.
             - Model backups.
             - Easy to use training and test methods.
+            - Seq2seq support.
     """
 
-    def __init__(self, nOutput=1000, model_type='basic_model', silence=False, input_shape=None,
-                 structure_path=None, weights_path=None, seq_to_functional=False,
-                 model_name=None, plots_path=None, models_path=None, inheritance=False):
+    def __init__(self,
+                 model_type='basic_model',
+                 silence=False,
+                 structure_path=None,
+                 weights_path=None,
+                 seq_to_functional=False,
+                 model_name=None,
+                 plots_path=None,
+                 models_path=None,
+                 inheritance=False
+                 ):
         """
             Model_Wrapper object constructor.
 
-            :param nOutput: number of outputs of the network. Only valid if 'structure_path' is None.
             :param model_type: network name type (corresponds to any method defined in the section 'MODELS' of this class).
                          Only valid if 'structure_path' is None.
             :param silence: set to True if you don't want the model to output informative messages
-            :param input_shape: array with 3 integers which define the images' input shape [height, width, channels].
-                                Only valid if 'structure_path' is None.
             :param structure_path: path to a Keras' model json file.
                                    If we speficy this parameter then 'type' will be only an informative parameter.
             :param weights_path: path to the pre-trained weights file (if None, then it will be randomly initialized)
@@ -415,20 +79,8 @@ class Model_Wrapper(object):
                                 (in this case the model will not be built from this __init__,
                                 it should be built from the child class).
         """
-        if input_shape is None:
-            input_shape = [256, 256, 3]
-
-        self.__toprint = ['net_type', 'name', 'plot_path', 'models_path', 'lr', 'momentum',
-                          'training_parameters', 'testing_parameters', 'training_state', 'loss', 'silence']
-
         self.silence = silence
-        self.net_type = model_type
-        self.lr = 0.01  # insert default learning rate
-        self.momentum = 1.0 - self.lr  # insert default momentum
-        self.loss = None  # default loss function
-        self.training_parameters = []
-        self.testing_parameters = []
-        self.training_state = dict()
+        self.model_type = model_type
         self._dynamic_display = True
 
         # Dictionary for storing any additional data needed
@@ -438,7 +90,7 @@ class Model_Wrapper(object):
         self.model = None
         self.model_init = None
         self.model_next = None
-        # self.model_to_train = None
+        self.multi_gpu_model = None
 
         # Inputs and outputs names for models of class Model
         self.ids_inputs = list()
@@ -475,7 +127,7 @@ class Model_Wrapper(object):
         self.default_training_params = dict()
         self.default_predict_with_beam_params = dict()
         self.default_test_params = dict()
-
+        self.tensorboard_callback = None
         self.set_default_params()
 
         # Prepare model
@@ -545,9 +197,10 @@ class Model_Wrapper(object):
                                         'data_augmentation': False,
                                         'wo_da_patch_type': 'whole',  # wo_da_patch_type = 'central_crop' or 'whole'.
                                         'da_patch_type': 'resize_and_rndcrop',
-                                        'da_enhance_list': [],  # da_enhance_list = {brightness, color, sharpness, contrast}
+                                        'da_enhance_list': [],
+                                        # da_enhance_list = {brightness, color, sharpness, contrast}
                                         'verbose': 1,
-                                        'eval_on_sets': ['val'],
+                                        'eval_on_sets': 'val',
                                         'reload_epoch': 0,
                                         'extra_callbacks': [],
                                         'class_weights': None,
@@ -572,16 +225,18 @@ class Model_Wrapper(object):
                                         'min_lr': 1e-9,
                                         'tensorboard': False,
                                         'n_gpus': 1,
-                                        'tensorboard_params': {'log_dir': 'tensorboard_logs',
-                                                               'histogram_freq': 0,
-                                                               'batch_size': 50,
-                                                               'write_graph': True,
-                                                               'write_grads': False,
-                                                               'write_images': False,
-                                                               'embeddings_freq': 0,
-                                                               'embeddings_layer_names': None,
-                                                               'embeddings_metadata': None
-                                                               }
+                                        'tensorboard_params':
+                                            {'log_dir': 'tensorboard_logs',
+                                             'histogram_freq': 0,
+                                             'batch_size': 50,
+                                             'write_graph': True,
+                                             'write_grads': False,
+                                             'write_images': False,
+                                             'embeddings_freq': 0,
+                                             'embeddings_layer_names': None,
+                                             'embeddings_metadata': None,
+                                             'update_freq': 'epoch'
+                                             }
                                         }
         self.defaut_test_params = {'batch_size': 50,
                                    'n_parallel_loaders': 1,
@@ -640,7 +295,8 @@ class Model_Wrapper(object):
                                        'verbose': 0,
                                        'predict_on_sets': ['val'],
                                        'max_eval_samples': None,
-                                       'model_name': 'model',  # name of the attribute where the model for prediction is stored
+                                       'model_name': 'model',
+                                       # name of the attribute where the model for prediction is stored
                                        }
 
     def setInputsMapping(self, inputsMapping):
@@ -664,7 +320,7 @@ class Model_Wrapper(object):
                                    the desired output order (in this case only one value can be provided).
                                    If it is Model then keys must be str.
             :param acc_output: name of the model's output that will be used for calculating
-                              the accuracy of the model (only needed for Graph models)
+                              the accuracy of the model (only needed for Model models)
         """
         if isinstance(self.model, Sequential) and len(list(outputsMapping)) > 1:
             raise Exception("When using Sequential models only one output can be provided in outputsMapping")
@@ -749,15 +405,33 @@ class Model_Wrapper(object):
         if not self.silence:
             logger.info("Compiling model...")
 
-        # compile differently depending if our model is 'Sequential', 'Model' or 'Graph'
+        # compile differently depending if our model is 'Sequential', 'Model'
         if isinstance(self.model, Sequential) or isinstance(self.model, Model):
-            self.model.compile(optimizer=optimizer, metrics=metrics, loss=loss, loss_weights=loss_weights,
+            self.model.compile(optimizer=optimizer,
+                               metrics=metrics,
+                               loss=loss,
+                               loss_weights=loss_weights,
                                sample_weight_mode=sample_weight_mode)
         else:
             raise NotImplementedError()
 
         if not self.silence:
             logger.info("Optimizer updated, learning rate set to " + str(lr))
+
+    def set_tensorboard_callback(self, params):
+        create_dir_if_not_exists(os.path.join(self.model_path, params['tensorboard_params']['log_dir']))
+        self.tensorboard_callback = keras.callbacks.TensorBoard(
+            log_dir=os.path.join(self.model_path, params['tensorboard_params']['log_dir']),
+            histogram_freq=params['tensorboard_params']['histogram_freq'],
+            batch_size=params['tensorboard_params']['batch_size'],
+            write_graph=params['tensorboard_params']['write_graph'],
+            write_grads=params['tensorboard_params']['write_grads'],
+            write_images=params['tensorboard_params']['write_images'],
+            embeddings_freq=params['tensorboard_params']['embeddings_freq'],
+            embeddings_layer_names=params['tensorboard_params']['embeddings_layer_names'],
+            embeddings_metadata=params['tensorboard_params']['embeddings_metadata'],
+            update_freq=params['tensorboard_params']['update_freq'],
+        )
 
     def compile(self, **kwargs):
         """
@@ -823,33 +497,6 @@ class Model_Wrapper(object):
     #       MODEL MODIFICATION
     #           Methods for modifying specific layers of the network
     # ------------------------------------------------------- #
-
-    def replaceLastLayers(self, num_remove, new_layers):
-        """
-            Replaces the last 'num_remove' layers in the model by the newly defined in 'new_layers'.
-            Function only valid for Sequential models. Use self.removeLayers(...) for Graph models.
-        """
-        if not self.silence:
-            logger.info("Replacing layers...")
-
-        removed_layers = []
-        removed_params = []
-        # If it is a Sequential model
-        if isinstance(self.model, Sequential):
-            # Remove old layers
-            for _ in range(num_remove):
-                removed_layers.append(self.model.layers.pop())
-                removed_params.append(self.model.params.pop())
-
-            # Insert new layers
-            for layer in new_layers:
-                self.model.add(layer)
-
-        # If it is a Graph model
-        else:
-            raise NotImplementedError("Try using self.removeLayers(...) instead.")
-
-        return [removed_layers, removed_params]
 
     # ------------------------------------------------------- #
     #       TRAINING/TEST
@@ -917,7 +564,6 @@ class Model_Wrapper(object):
             params['start_reduction_on_epoch'] = params['lr_decay']
         save_params = copy.copy(params)
         del save_params['extra_callbacks']
-        self.training_parameters.append(save_params)
         if params['verbose'] > 0:
             logger.info("<<< Training model >>>")
 
@@ -934,8 +580,7 @@ class Model_Wrapper(object):
             :param parameters:
             :param class_weight:
             :param sample_weight:
-            :param out_name: name of the output node that will be used to evaluate the network accuracy.
-                             Only applicable to Graph models.
+            :param out_name: name of the output node that will be used to evaluate the network accuracy. Only applicable to Models.
 
             The input 'parameters' is a dict() which may contain the following (optional) training parameters:
             ####    Visualization parameters
@@ -951,7 +596,6 @@ class Model_Wrapper(object):
         params = checkParameters(parameters, self.default_training_params, hard_check=True)
         save_params = copy.copy(params)
         del save_params['extra_callbacks']
-        self.training_parameters.append(save_params)
         self.__train_from_samples(x, y, params, class_weight=class_weight, sample_weight=sample_weight)
         if params['verbose'] > 0:
             logger.info("<<< Finished training model >>>")
@@ -1007,39 +651,9 @@ class Model_Wrapper(object):
 
         # Tensorboard callback
         if params['tensorboard'] and K.backend() == 'tensorflow':
-            # embeddings_metadata = params['tensorboard_params']['embeddings_metadata']
-            create_dir_if_not_exists(self.model_path + '/' + params['tensorboard_params']['log_dir'])
-            # if params['tensorboard_params']['label_word_embeddings_with_vocab'] \
-            #         and params['tensorboard_params']['word_embeddings_labels'] is not None:
-            #     embeddings_metadata = {}
-            #     if len(params['tensorboard_params']['embeddings_layer_names']) != len(params['tensorboard_params']['word_embeddings_labels']):
-            #         raise AssertionError('The number of "embeddings_layer_names" and "word_embeddings_labels" do not match. Currently, '
-            #                              'we have %d "embeddings_layer_names" and %d "word_embeddings_labels"' %
-            #                              (len(params['tensorboard_params']['embeddings_layer_names']),
-            #                               len(params['tensorboard_params']['word_embeddings_labels'])))
-            #     # Prepare word embeddings mapping
-            #     for i, layer_name in list(enumerate(params['tensorboard_params']['embeddings_layer_names'])):
-            #         layer_label = params['tensorboard_params']['word_embeddings_labels'][i]
-            #         mapping_name = layer_label + '.tsv'
-            #         dict2file(ds.vocabulary[layer_label]['words2idx'],
-            #                   self.model_path + '/' + params['tensorboard_params']['log_dir'] + '/' + mapping_name,
-            #                   title='Word\tIndex',
-            #                   separator='\t')
-            #         embeddings_metadata[layer_name] = mapping_name
-
-            callback_tensorboard = keras.callbacks.TensorBoard(
-                log_dir=self.model_path + '/' + params['tensorboard_params']['log_dir'],
-                histogram_freq=params['tensorboard_params']['histogram_freq'],
-                batch_size=params['tensorboard_params']['batch_size'],
-                write_graph=params['tensorboard_params']['write_graph'],
-                write_grads=params['tensorboard_params']['write_grads'],
-                write_images=params['tensorboard_params']['write_images'],
-                # embeddings_freq=params['tensorboard_params']['embeddings_freq'],
-                # embeddings_layer_names=params['tensorboard_params']['embeddings_layer_names'],
-                # embeddings_metadata=embeddings_metadata
-            )
-            callback_tensorboard.set_model(self.model)
-            callbacks.append(callback_tensorboard)
+            self.set_tensorboard_callback(params)
+            self.tensorboard_callback.set_model(self.model)
+            callbacks.append(self.tensorboard_callback)
 
         # Prepare data generators
         if params['homogeneous_batches']:
@@ -1087,8 +701,7 @@ class Model_Wrapper(object):
                                              shuffle=params['shuffle']).generator()
 
         # Are we going to validate on 'val' data?
-        if False:  # TODO: loss calculation on val set is deactivated
-            # if 'val' in params['eval_on_sets']:
+        if params['eval_on_sets']:
             # Calculate how many validation iterations are we going to perform per test
             n_valid_samples = ds.len_val
             if params['num_iterations_val'] is None:
@@ -1096,7 +709,10 @@ class Model_Wrapper(object):
 
             # prepare data generator
             if params['n_parallel_loaders'] > 1:
-                val_gen = Parallel_Data_Batch_Generator('val', self, ds, params['num_iterations_val'],
+                val_gen = Parallel_Data_Batch_Generator(params['eval_on_sets'],
+                                                        self,
+                                                        ds,
+                                                        params['num_iterations_val'],
                                                         batch_size=params['batch_size'],
                                                         normalization=params['normalize'],
                                                         normalization_type=params['normalization_type'],
@@ -1105,7 +721,10 @@ class Model_Wrapper(object):
                                                         shuffle=False,
                                                         n_parallel_loaders=params['n_parallel_loaders']).generator()
             else:
-                val_gen = Data_Batch_Generator('val', self, ds, params['num_iterations_val'],
+                val_gen = Data_Batch_Generator(params['eval_on_sets'],
+                                               self,
+                                               ds,
+                                               params['num_iterations_val'],
                                                batch_size=params['batch_size'],
                                                normalization=params['normalize'],
                                                normalization_type=params['normalization_type'],
@@ -1121,7 +740,7 @@ class Model_Wrapper(object):
         if params['class_weights'] is not None:
             class_weight = ds.extra_variables['class_weights_' + params['class_weights']]
         # Train model
-        if params.get('n_gpus', 1) > 1 and hasattr(self, 'multi_gpu_model') and self.multi_gpu_model is not None:
+        if params.get('n_gpus', 1) > 1 and self.multi_gpu_model is not None:
             model_to_train = self.multi_gpu_model
         else:
             model_to_train = self.model
@@ -1147,6 +766,7 @@ class Model_Wrapper(object):
                                          callbacks=callbacks,
                                          validation_data=val_gen,
                                          validation_steps=n_valid_samples,
+                                         validation_freq=params['each_n_epochs'],
                                          class_weight=class_weight,
                                          max_queue_size=params['n_parallel_loaders'],
                                          workers=1,
@@ -1195,18 +815,9 @@ class Model_Wrapper(object):
 
         # Tensorboard callback
         if params['tensorboard'] and K.backend() == 'tensorflow':
-            callback_tensorboard = keras.callbacks.TensorBoard(
-                log_dir=self.model_path + '/' + params['tensorboard_params']['log_dir'],
-                histogram_freq=params['tensorboard_params']['histogram_freq'],
-                batch_size=params['tensorboard_params']['batch_size'],
-                write_graph=params['tensorboard_params']['write_graph'],
-                write_grads=params['tensorboard_params']['write_grads'],
-                write_images=params['tensorboard_params']['write_images'],
-                # embeddings_freq=params['tensorboard_params']['embeddings_freq'],
-                # embeddings_layer_names=params['tensorboard_params']['embeddings_layer_names'],
-                # embeddings_metadata=params['tensorboard_params']['embeddings_metadata']
-            )
-            callbacks.append(callback_tensorboard)
+            self.set_tensorboard_callback(params)
+            self.tensorboard_callback.set_model(self.model)
+            callbacks.append(self.tensorboard_callback)
 
         # Train model
         if params.get('n_gpus', 1) > 1 and hasattr(self, 'model_to_train'):
@@ -1238,7 +849,6 @@ class Model_Wrapper(object):
         """
         # Check input parameters and recover default values if needed
         params = checkParameters(parameters, self.defaut_test_params)
-        self.testing_parameters.append(copy.copy(params))
 
         logger.info("<<< Testing model >>>")
 
@@ -1277,14 +887,6 @@ class Model_Wrapper(object):
         for name, o in zip(self.model.metrics_names, out):
             logger.info('test ' + name + ': %0.8s' % o)
 
-            # loss_all = out[0]
-            # loss_ecoc = out[1]
-            # loss_final = out[2]
-            # acc_ecoc = out[3]
-            # acc_final = out[4]
-            # logger.info('Test loss: %0.8s' % loss_final)
-            # logger.info('Test accuracy: %0.8s' % acc_final)
-
     def testNetSamples(self, X, batch_size=50):
         """
             Applies a forward pass on the samples provided and returns the predicted classes and probabilities.
@@ -1314,7 +916,7 @@ class Model_Wrapper(object):
                 return loss, score, top_score, n_samples
             return loss, n_samples
         else:
-            [data, last_output] = self._prepareGraphData(X, Y)
+            [data, last_output] = self._prepareModelData(X, Y)
             loss = self.model.test_on_batch(data)
             loss = loss[0]
             if accuracy:
@@ -1594,7 +1196,7 @@ class Model_Wrapper(object):
         references = []
         sources_sampling = []
         for s in params['predict_on_sets']:
-            print ("")
+            print("")
             print("", file=sys.stderr)
             logger.info("<<< Predicting outputs of " + s + " set >>>")
 
@@ -1635,11 +1237,13 @@ class Model_Wrapper(object):
                                                                           num_iterations,
                                                                           batch_size=1,
                                                                           normalization=params['normalize'],
-                                                                          normalization_type=params['normalization_type'],
+                                                                          normalization_type=params[
+                                                                              'normalization_type'],
                                                                           data_augmentation=False,
                                                                           mean_substraction=params['mean_substraction'],
                                                                           predict=True,
-                                                                          n_parallel_loaders=params['n_parallel_loaders'])
+                                                                          n_parallel_loaders=params[
+                                                                              'n_parallel_loaders'])
                     else:
                         data_gen_instance = Data_Batch_Generator(s,
                                                                  self,
@@ -1661,13 +1265,15 @@ class Model_Wrapper(object):
                         data_gen_instance = Parallel_Data_Batch_Generator(s, self, ds, num_iterations,
                                                                           batch_size=1,
                                                                           normalization=params['normalize'],
-                                                                          normalization_type=params['normalization_type'],
+                                                                          normalization_type=params[
+                                                                              'normalization_type'],
                                                                           data_augmentation=False,
                                                                           mean_substraction=params['mean_substraction'],
                                                                           predict=False,
                                                                           random_samples=n_samples,
                                                                           temporally_linked=params['temporally_linked'],
-                                                                          n_parallel_loaders=params['n_parallel_loaders'])
+                                                                          n_parallel_loaders=params[
+                                                                              'n_parallel_loaders'])
                     else:
                         data_gen_instance = Data_Batch_Generator(s, self, ds, num_iterations,
                                                                  batch_size=1,
@@ -1684,11 +1290,9 @@ class Model_Wrapper(object):
                     references = []
                     sources_sampling = []
                 best_samples = []
-                if params['pos_unk']:
-                    best_alphas = []
-                    sources = []
-
-                total_cost = 0
+                best_scores = np.array([])
+                best_alphas = []
+                sources = []
                 sampled = 0
                 start_time = time.time()
                 eta = -1
@@ -1773,18 +1377,20 @@ class Model_Wrapper(object):
                                     coverage_penalties.append(params['coverage_norm_factor'] * cp_penalty)
                             else:
                                 coverage_penalties = [0.0 for _ in samples]
-                            scores = [co / lp + cov_p for co, lp, cov_p in zip(scores, length_penalties, coverage_penalties)]
+                            scores = [co / lp + cov_p for co, lp, cov_p in
+                                      zip(scores, length_penalties, coverage_penalties)]
 
                         elif params['normalize_probs']:
                             counts = [len(sample) ** params['alpha_factor'] for sample in samples]
                             scores = [co / cn for co, cn in zip(scores, counts)]
 
-                        best_score = np.argmin(scores)
-                        best_sample = samples[best_score]
+                        best_score_idx = np.argmin(scores)
+                        best_sample = samples[best_score_idx]
                         best_samples.append(best_sample)
+                        best_scores = np.concatenate([best_scores, [scores[best_score_idx]]])
                         if params['pos_unk']:
-                            best_alphas.append(np.asarray(alphas[best_score]))
-                        total_cost += scores[best_score]
+                            best_alphas.append(np.asarray(alphas[best_score_idx]))
+
                         eta = (n_samples - sampled) * (time.time() - start_time) / sampled
                         if params['n_samples'] > 0:
                             for output_id in params['model_outputs']:
@@ -1798,19 +1404,25 @@ class Model_Wrapper(object):
                                 # Get all words previous to the padding
                                 previous_outputs[input_id][first_idx + sampled - 1] = best_sample[:sum(
                                     [int(elem > 0) for elem in best_sample])]
-
-                sys.stdout.write('\n Total cost of the translations: %f \t Average cost of the translations: %f\n' % (total_cost, total_cost / n_samples))
-                sys.stdout.write('The sampling took: %f secs (Speed: %f sec/sample)\n' % ((time.time() - start_time), (time.time() - start_time) / n_samples))
+                sys.stdout.write('\n Total cost: %f \t'
+                                 ' Average cost: %f\n' % (float(np.sum(best_scores, axis=None)),
+                                                          float(np.average(best_scores, axis=None))))
+                sys.stdout.write('The sampling took: %f secs '
+                                 '(Speed: %f sec/sample)\n' % ((time.time() - start_time),
+                                                               (time.time() - start_time) / n_samples))
 
                 sys.stdout.flush()
-
+                sources = None
                 if params['pos_unk']:
                     if eval('ds.loaded_raw_' + s + '[0]'):
                         sources = file2list(eval('ds.X_raw_' + s + '["raw_' + params['model_inputs'][0] + '"]'),
                                             stripfile=False)
-                    predictions[s] = (np.asarray(best_samples), best_alphas, sources)
-                else:
-                    predictions[s] = np.asarray(best_samples)
+                predictions[s] = {
+                    'samples': np.asarray(best_samples),
+                    'alphas': best_alphas,
+                    'sources': sources,
+                    'costs': best_scores
+                }
         del data_gen
         del data_gen_instance
         if params['n_samples'] < 1:
@@ -1904,7 +1516,8 @@ class Model_Wrapper(object):
                                                              mean_substraction=params['mean_substraction'],
                                                              predict=True,
                                                              random_samples=n_samples,
-                                                             n_parallel_loaders=params['n_parallel_loaders']).generator()
+                                                             n_parallel_loaders=params[
+                                                                 'n_parallel_loaders']).generator()
                 else:
                     data_gen = Data_Batch_Generator(s,
                                                     self,
@@ -1983,10 +1596,10 @@ class Model_Wrapper(object):
         predictions = self.model.predict_on_batch(X)
 
         # Select output if indicated
-        if isinstance(self.model, Model):  # Graph
+        if isinstance(self.model, Model):
             if out_name:
                 predictions = predictions[out_name]
-        elif isinstance(self.model, Sequential):  # Sequential
+        elif isinstance(self.model, Sequential):
             predictions = predictions[0]
 
         return predictions
@@ -2203,25 +1816,6 @@ class Model_Wrapper(object):
         return decode_predictions(preds, temperature, index2word, sampling_type, verbose=verbose)
 
     @staticmethod
-    def replace_unknown_words(src_word_seq, trg_word_seq, hard_alignment, unk_symbol,
-                              heuristic=0, mapping=None, verbose=0):
-        """
-        Replaces unknown words from the target sentence according to some heuristic.
-        Borrowed from: https://github.com/sebastien-j/LV_groundhog/blob/master/experiments/nmt/replace_UNK.py
-        :param src_word_seq: Source sentence words
-        :param trg_word_seq: Hypothesis words
-        :param hard_alignment: Target-Source alignments
-        :param unk_symbol: Symbol in trg_word_seq to replace
-        :param heuristic: Heuristic (0, 1, 2)
-        :param mapping: External alignment dictionary
-        :param verbose: Verbosity level
-        :return: trg_word_seq with replaced unknown words
-        """
-        logger.warning("Deprecated function, use utils.replace_unknown_words() instead.")
-        return replace_unknown_words(src_word_seq, trg_word_seq, hard_alignment, unk_symbol,
-                                     heuristic=heuristic, mapping=mapping, verbose=verbose)
-
-    @staticmethod
     def decode_predictions_beam_search(preds, index2word, alphas=None, heuristic=0,
                                        x_text=None, unk_symbol='<unk>', pad_sequences=False,
                                        mapping=None, verbose=0):
@@ -2269,7 +1863,7 @@ class Model_Wrapper(object):
 
     def prepareData(self, X_batch, Y_batch=None):
         """
-        Prepares the data for the model, depending on its type (Sequential, Model, Graph).
+        Prepares the data for the model, depending on its type (Sequential, Model).
         :param X_batch: Batch of input data.
         :param Y_batch: Batch output data.
         :return: Prepared data.
@@ -2364,7 +1958,7 @@ class Model_Wrapper(object):
         """
         top_pred = np.argsort(pred, axis=1)[:, ::-1][:, :np.min([topN, pred.shape[1]])]
         pred = categorical_probas_to_classes(pred)
-        GT = np_utils.categorical_probas_to_classes(GT)
+        GT = categorical_probas_to_classes(GT)
 
         # Top1 accuracy
         correct = [1 if pred[i] == GT[i] else 0 for i in range(len(pred))]
@@ -2385,10 +1979,16 @@ class Model_Wrapper(object):
         """
         Plot basic model information.
         """
-
-        # if(isinstance(self.model, Model)):
-        print_summary(self.model.layers)
+        keras.utils.layer_utils.print_summary(self.model.layers)
         return ''
+
+    def log_tensorboard(self, metrics, step, split=None):
+        """Logs scalar metrics in Tensorboard
+        """
+        if self.tensorboard_callback:
+            if split:
+                metrics = {str(split) + '/' + k: v for k, v in iteritems(metrics)}
+            self.tensorboard_callback._write_logs(metrics, step)
 
     def log(self, mode, data_type, value):
         """
@@ -2400,9 +2000,6 @@ class Model_Wrapper(object):
         """
         if mode not in self.__modes:
             raise Exception('The provided mode "' + mode + '" is not valid.')
-        # if data_type not in self.__data_types:
-        #    raise Exception('The provided data_type "'+ data_type +'" is not valid.')
-
         if mode not in self.__logger:
             self.__logger[mode] = dict()
         if data_type not in self.__logger[mode]:
@@ -2503,7 +2100,7 @@ class Model_Wrapper(object):
             os.makedirs(self.model_path)
 
         # Save figure
-        plot_file = self.model_path + '/' + time_measure + '_' + str(max_iter) + '.jpg'
+        plot_file = os.path.join(self.model_path, time_measure + '_' + str(max_iter) + '.jpg')
         plt.savefig(plot_file)
         if not self.silence:
             print("", file=sys.stderr)
@@ -2511,974 +2108,6 @@ class Model_Wrapper(object):
 
         # Close plot window
         plt.close()
-
-    # ------------------------------------------------------- #
-    #   MODELS
-    #       Available definitions of CNN models (see basic_model as an example)
-    #       All the models must include the following parameters:
-    #           nOutput, input
-    # ------------------------------------------------------- #
-
-    def basic_model(self, nOutput, model_input):
-        """
-            Builds a basic CNN model.
-        """
-
-        # Define inputs and outputs IDs
-        self.ids_inputs = ['input']
-        self.ids_outputs = ['output']
-
-        if len(model_input) == 3:
-            input_shape = tuple([model_input[2]] + model_input[0:2])
-        else:
-            input_shape = tuple(model_input)
-
-        inp = Input(shape=input_shape, name='input')
-
-        # model_input: 100x100 images with 3 channels -> (3, 100, 100) tensors.
-        # this applies 32 convolution filters of size 3x3 each.
-        x = Conv2D(32, (3, 3), padding='valid')(inp)
-        x = Activation('relu')(x)
-        x = Conv2D(32, (3, 3))(x)
-        x = Activation('relu')(x)
-        x = MaxPooling2D(pool_size=(2, 2))(x)
-        x = Dropout(0.25)(x)
-
-        x = Conv2D(64, (3, 3), padding='valid')(x)
-        x = Activation('relu')(x)
-        x = Conv2D(64, (3, 3))(x)
-        x = Activation('relu')(x)
-        x = MaxPooling2D(pool_size=(2, 2))(x)
-        x = Dropout(0.25)(x)
-
-        x = Conv2D(128, (3, 3), padding='valid')(x)
-        x = Activation('relu')(x)
-        x = Conv2D(64, (3, 3))(x)
-        x = Activation('relu')(x)
-        x = MaxPooling2D(pool_size=(2, 2))(x)
-        x = Dropout(0.25)(x)
-
-        x = Conv2D(256, (3, 3), padding='valid')(x)
-        x = Activation('relu')(x)
-        x = Conv2D(64, (3, 3))(x)
-        x = Activation('relu')(x)
-        x = MaxPooling2D(pool_size=(2, 2))(x)
-        x = Dropout(0.25)(x)
-
-        x = Conv2D(256, (3, 3), padding='valid')(x)
-        x = Activation('relu')(x)
-        x = Conv2D(64, (3, 3))(x)
-        x = Activation('relu')(x)
-        x = MaxPooling2D(pool_size=(2, 2))(x)
-        x = Dropout(0.25)(x)
-
-        x = Flatten()(x)
-        # Note: Keras does automatic shape inference.
-        x = Dense(1024)(x)
-        x = Activation('relu')(x)
-        x = Dropout(0.5)(x)
-
-        x = Dense(nOutput)(x)
-        out = Activation('softmax', name='output')(x)
-
-        self.model = Model(inputs=[inp], outputs=[out])
-
-    def basic_model_seq(self, nOutput, input_shape):
-        """
-            Builds a basic CNN model.
-        """
-
-        if len(input_shape) == 3:
-            input_shape = tuple([input_shape[2]] + input_shape[0:2])
-        else:
-            input_shape = tuple(input_shape)
-
-        self.model = Sequential()
-        # input: 100x100 images with 3 channels -> (3, 100, 100) tensors.
-        # this applies 32 convolution filters of size 3x3 each.
-        self.model.add(Conv2D(32, (3, 3), padding='valid', input_shape=input_shape))
-        self.model.add(Activation('relu'))
-        self.model.add(Conv2D(32, (3, 3)))
-        self.model.add(Activation('relu'))
-        self.model.add(MaxPooling2D(pool_size=(2, 2)))
-        self.model.add(Dropout(0.25))
-
-        self.model.add(Conv2D(64, (3, 3), padding='valid'))
-        self.model.add(Activation('relu'))
-        self.model.add(Conv2D(64, (3, 3)))
-        self.model.add(Activation('relu'))
-        self.model.add(MaxPooling2D(pool_size=(2, 2)))
-        self.model.add(Dropout(0.25))
-
-        self.model.add(Conv2D(128, (3, 3), padding='valid'))
-        self.model.add(Activation('relu'))
-        self.model.add(Conv2D(64, (3, 3)))
-        self.model.add(Activation('relu'))
-        self.model.add(MaxPooling2D(pool_size=(2, 2)))
-        self.model.add(Dropout(0.25))
-
-        self.model.add(Conv2D(256, (3, 3), padding='valid'))
-        self.model.add(Activation('relu'))
-        self.model.add(Conv2D(64, (3, 3)))
-        self.model.add(Activation('relu'))
-        self.model.add(MaxPooling2D(pool_size=(2, 2)))
-        self.model.add(Dropout(0.25))
-
-        self.model.add(Conv2D(256, (3, 3), padding='valid'))
-        self.model.add(Activation('relu'))
-        self.model.add(Conv2D(64, (3, 3)))
-        self.model.add(Activation('relu'))
-        self.model.add(MaxPooling2D(pool_size=(2, 2)))
-        self.model.add(Dropout(0.25))
-
-        self.model.add(Flatten())
-        # Note: Keras does automatic shape inference.
-        self.model.add(Dense(1024))
-        self.model.add(Activation('relu'))
-        self.model.add(Dropout(0.5))
-
-        self.model.add(Dense(nOutput))
-        self.model.add(Activation('softmax'))
-
-    def One_vs_One(self, nOutput, input_shape):
-        """
-            Builds a simple One_vs_One network with 3 convolutional layers (useful for ECOC models).
-        """
-        # default lr=0.1, momentum=0.
-        if len(input_shape) == 3:
-            input_shape = tuple([input_shape[2]] + input_shape[0:2])
-        else:
-            input_shape = tuple(input_shape)
-
-        self.model = Sequential()
-        self.model.add(ZeroPadding2D((1, 1), input_shape=input_shape))  # default input_shape=(3,224,224)
-        self.model.add(Conv2D(32, (1, 1), activation='relu'))
-        self.model.add(ZeroPadding2D((1, 1)))
-        self.model.add(Conv2D(16, (3, 3), activation='relu'))
-        self.model.add(ZeroPadding2D((1, 1)))
-        self.model.add(Conv2D(8, (3, 3), activation='relu'))
-        self.model.add(MaxPooling2D((2, 2), strides=(1, 1)))
-
-        self.model.add(Flatten())
-        self.model.add(Dropout(0.5))
-        self.model.add(Dense(nOutput, activation='softmax'))  # default nOutput=1000
-
-    def VGG_16(self, nOutput, input_shape):
-        """
-            Builds a VGG model with 16 layers.
-        """
-        # default lr=0.1, momentum=0.
-        if len(input_shape) == 3:
-            input_shape = tuple([input_shape[2]] + input_shape[0:2])
-        else:
-            input_shape = tuple(input_shape)
-
-        self.model = Sequential()
-        self.model.add(ZeroPadding2D((1, 1), input_shape=input_shape))  # default input_shape=(3,224,224)
-        self.model.add(Conv2D(64, (3, 3), activation='relu'))
-        self.model.add(ZeroPadding2D((1, 1)))
-        self.model.add(Conv2D(64, (3, 3), activation='relu'))
-        self.model.add(MaxPooling2D((2, 2), strides=(2, 2)))
-
-        self.model.add(ZeroPadding2D((1, 1)))
-        self.model.add(Conv2D(128, (3, 3), activation='relu'))
-        self.model.add(ZeroPadding2D((1, 1)))
-        self.model.add(Conv2D(128, (3, 3), activation='relu'))
-        self.model.add(MaxPooling2D((2, 2), strides=(2, 2)))
-
-        self.model.add(ZeroPadding2D((1, 1)))
-        self.model.add(Conv2D(256, (3, 3), activation='relu'))
-        self.model.add(ZeroPadding2D((1, 1)))
-        self.model.add(Conv2D(256, (3, 3), activation='relu'))
-        self.model.add(ZeroPadding2D((1, 1)))
-        self.model.add(Conv2D(256, (3, 3), activation='relu'))
-        self.model.add(MaxPooling2D((2, 2), strides=(2, 2)))
-
-        self.model.add(ZeroPadding2D((1, 1)))
-        self.model.add(Conv2D(512, (3, 3), activation='relu'))
-        self.model.add(ZeroPadding2D((1, 1)))
-        self.model.add(Conv2D(512, (3, 3), activation='relu'))
-        self.model.add(ZeroPadding2D((1, 1)))
-        self.model.add(Conv2D(512, (3, 3), activation='relu'))
-        self.model.add(MaxPooling2D((2, 2), strides=(2, 2)))
-
-        self.model.add(ZeroPadding2D((1, 1)))
-        self.model.add(Conv2D(512, (3, 3), activation='relu'))
-        self.model.add(ZeroPadding2D((1, 1)))
-        self.model.add(Conv2D(512, (3, 3), activation='relu'))
-        self.model.add(ZeroPadding2D((1, 1)))
-        self.model.add(Conv2D(512, (3, 3), activation='relu'))
-        self.model.add(MaxPooling2D((2, 2), strides=(2, 2)))
-
-        self.model.add(Flatten())
-        self.model.add(Dense(4096, activation='relu'))
-        self.model.add(Dropout(0.5))
-        self.model.add(Dense(4096, activation='relu'))
-        self.model.add(Dropout(0.5))
-        self.model.add(Dense(nOutput, activation='softmax'))  # default nOutput=1000
-
-    def VGG_16_PReLU(self, nOutput, input_shape):
-        """
-            Builds a VGG model with 16 layers and with PReLU activations.
-        """
-
-        if len(input_shape) == 3:
-            input_shape = tuple([input_shape[2]] + input_shape[0:2])
-        else:
-            input_shape = tuple(input_shape)
-
-        self.model = Sequential()
-        self.model.add(ZeroPadding2D((1, 1), input_shape=input_shape))  # default input_shape=(3,224,224)
-        self.model.add(Conv2D(64, (3, 3)))
-        self.model.add(PReLU())
-        self.model.add(ZeroPadding2D((1, 1)))
-        self.model.add(Conv2D(64, (3, 3)))
-        self.model.add(PReLU())
-        self.model.add(MaxPooling2D((2, 2), strides=(2, 2)))
-
-        self.model.add(ZeroPadding2D((1, 1)))
-        self.model.add(Conv2D(128, (3, 3)))
-        self.model.add(PReLU())
-        self.model.add(ZeroPadding2D((1, 1)))
-        self.model.add(Conv2D(128, (3, 3)))
-        self.model.add(PReLU())
-        self.model.add(MaxPooling2D((2, 2), strides=(2, 2)))
-
-        self.model.add(ZeroPadding2D((1, 1)))
-        self.model.add(Conv2D(256, (3, 3)))
-        self.model.add(PReLU())
-        self.model.add(ZeroPadding2D((1, 1)))
-        self.model.add(Conv2D(256, (3, 3)))
-        self.model.add(PReLU())
-        self.model.add(ZeroPadding2D((1, 1)))
-        self.model.add(Conv2D(256, (3, 3)))
-        self.model.add(PReLU())
-        self.model.add(MaxPooling2D((2, 2), strides=(2, 2)))
-
-        self.model.add(ZeroPadding2D((1, 1)))
-        self.model.add(Conv2D(512, (3, 3)))
-        self.model.add(PReLU())
-        self.model.add(ZeroPadding2D((1, 1)))
-        self.model.add(Conv2D(512, (3, 3)))
-        self.model.add(PReLU())
-        self.model.add(ZeroPadding2D((1, 1)))
-        self.model.add(Conv2D(512, (3, 3)))
-        self.model.add(PReLU())
-        self.model.add(MaxPooling2D((2, 2), strides=(2, 2)))
-
-        self.model.add(ZeroPadding2D((1, 1)))
-        self.model.add(Conv2D(512, (3, 3)))
-        self.model.add(PReLU())
-        self.model.add(ZeroPadding2D((1, 1)))
-        self.model.add(Conv2D(512, (3, 3)))
-        self.model.add(PReLU())
-        self.model.add(ZeroPadding2D((1, 1)))
-        self.model.add(Conv2D(512, (3, 3)))
-        self.model.add(PReLU())
-        self.model.add(MaxPooling2D((2, 2), strides=(2, 2)))
-
-        self.model.add(Flatten())
-        self.model.add(Dense(4096))
-        self.model.add(PReLU())
-        self.model.add(Dropout(0.5))
-        self.model.add(Dense(4096))
-        self.model.add(PReLU())
-        self.model.add(Dropout(0.5))
-        self.model.add(Dense(nOutput, activation='softmax'))  # default nOutput=1000
-
-    def VGG_16_FunctionalAPI(self, nOutput, input_shape):
-        """
-            16-layered VGG model implemented in Keras' Functional API
-        """
-        if len(input_shape) == 3:
-            input_shape = tuple([input_shape[2]] + input_shape[0:2])
-        else:
-            input_shape = tuple(input_shape)
-
-        vis_input = Input(shape=input_shape, name="vis_input")
-
-        x = ZeroPadding2D((1, 1))(vis_input)
-        x = Conv2D(64, (3, 3), activation='relu')(x)
-        x = ZeroPadding2D((1, 1))(x)
-        x = Conv2D(64, (3, 3), activation='relu')(x)
-        x = MaxPooling2D((2, 2), strides=(2, 2))(x)
-
-        x = ZeroPadding2D((1, 1))(x)
-        x = Conv2D(128, (3, 3), activation='relu')(x)
-        x = ZeroPadding2D((1, 1))(x)
-        x = Conv2D(128, (3, 3), activation='relu')(x)
-        x = MaxPooling2D((2, 2), strides=(2, 2))(x)
-
-        x = ZeroPadding2D((1, 1))(x)
-        x = Conv2D(256, (3, 3), activation='relu')(x)
-        x = ZeroPadding2D((1, 1))(x)
-        x = Conv2D(256, (3, 3), activation='relu')(x)
-        x = ZeroPadding2D((1, 1))(x)
-        x = Conv2D(256, (3, 3), activation='relu')(x)
-        x = MaxPooling2D((2, 2), strides=(2, 2))(x)
-
-        x = ZeroPadding2D((1, 1))(x)
-        x = Conv2D(512, (3, 3), activation='relu')(x)
-        x = ZeroPadding2D((1, 1))(x)
-        x = Conv2D(512, (3, 3), activation='relu')(x)
-        x = ZeroPadding2D((1, 1))(x)
-        x = Conv2D(512, (3, 3), activation='relu')(x)
-        x = MaxPooling2D((2, 2), strides=(2, 2))(x)
-
-        x = ZeroPadding2D((1, 1))(x)
-        x = Conv2D(512, (3, 3), activation='relu')(x)
-        x = ZeroPadding2D((1, 1))(x)
-        x = Conv2D(512, (3, 3), activation='relu')(x)
-        x = ZeroPadding2D((1, 1))(x)
-        x = Conv2D(512, (3, 3), activation='relu')(x)
-        x = MaxPooling2D((2, 2), strides=(2, 2),
-                         name='last_max_pool')(x)
-
-        x = Flatten()(x)
-        x = Dense(4096, activation='relu')(x)
-        x = Dropout(0.5)(x)
-        x = Dense(4096, activation='relu')(x)
-        x = Dropout(0.5, name='last_dropout')(x)
-        x = Dense(nOutput, activation='softmax', name='output')(x)  # nOutput=1000 by default
-
-        self.model = Model(inputs=[vis_input], outputs=[x])
-
-    def VGG_19(self, nOutput, input_shape):
-        """
-        19-layered VGG model implemented in Keras' Functional API
-        """
-        # Define inputs and outputs IDs
-        self.ids_inputs = ['input_1']
-        self.ids_outputs = ['predictions']
-        from keras.applications.vgg19 import VGG19
-
-        # Load VGG19 model pre-trained on ImageNet
-        self.model = VGG19()
-
-        # Recover input layer
-        image = self.model.get_layer(self.ids_inputs[0]).output
-
-        # Recover last layer kept from original model
-        out = self.model.get_layer('fc2').output
-        out = Dense(nOutput, name=self.ids_outputs[0], activation='softmax')(out)
-
-        self.model = Model(inputs=[image], outputs=[out])
-
-    def VGG_19_ImageNet(self, nOutput, input_shape):
-        """
-        19-layered VGG model implemented in Keras' Functional API trained on Imagenet.
-        """
-        # Define inputs and outputs IDs
-        self.ids_inputs = ['input_1']
-        self.ids_outputs = ['predictions']
-        from keras.applications.vgg19 import VGG19
-
-        # Load VGG19 model pre-trained on ImageNet
-        self.model = VGG19(weights='imagenet', layers_lr=0.001)
-
-        # Recover input layer
-        image = self.model.get_layer(self.ids_inputs[0]).output
-
-        # Recover last layer kept from original model
-        out = self.model.get_layer('fc2').output
-        out = Dense(nOutput, name=self.ids_outputs[0], activation='softmax')(out)
-
-        self.model = Model(inputs=[image], outputs=[out])
-
-    ########################################
-    # GoogLeNet implementation from http://dandxy89.github.io/ImageModels/googlenet/
-    ########################################
-
-    @staticmethod
-    def inception_module(x, params, dim_ordering, concat_axis,
-                         subsample=(1, 1), activation='relu',
-                         border_mode='same', weight_decay=None):
-
-        # https://gist.github.com/nervanazoo/2e5be01095e935e90dd8  #
-        # file-googlenet_neon-py
-
-        (branch1, branch2, branch3, branch4) = params
-
-        if weight_decay:
-            W_regularizer = l2(weight_decay)
-            b_regularizer = l2(weight_decay)
-        else:
-            W_regularizer = None
-            b_regularizer = None
-
-        pathway1 = Conv2D(branch1[0], (1, 1),
-                          subsample=subsample,
-                          activation=activation,
-                          padding=border_mode,
-                          W_regularizer=W_regularizer,
-                          b_regularizer=b_regularizer,
-                          bias=False,
-                          dim_ordering=dim_ordering)(x)
-
-        pathway2 = Conv2D(branch2[0], (1, 1),
-                          subsample=subsample,
-                          activation=activation,
-                          padding=border_mode,
-                          W_regularizer=W_regularizer,
-                          b_regularizer=b_regularizer,
-                          bias=False,
-                          dim_ordering=dim_ordering)(x)
-        pathway2 = Conv2D(branch2[1], (3, 3),
-                          subsample=subsample,
-                          activation=activation,
-                          padding=border_mode,
-                          W_regularizer=W_regularizer,
-                          b_regularizer=b_regularizer,
-                          bias=False,
-                          dim_ordering=dim_ordering)(pathway2)
-
-        pathway3 = Conv2D(branch3[0], (1, 1),
-                          subsample=subsample,
-                          activation=activation,
-                          padding=border_mode,
-                          W_regularizer=W_regularizer,
-                          b_regularizer=b_regularizer,
-                          bias=False,
-                          dim_ordering=dim_ordering)(x)
-        pathway3 = Conv2D(branch3[1], (5, 5),
-                          subsample=subsample,
-                          activation=activation,
-                          padding=border_mode,
-                          W_regularizer=W_regularizer,
-                          b_regularizer=b_regularizer,
-                          bias=False,
-                          dim_ordering=dim_ordering)(pathway3)
-
-        pathway4 = MaxPooling2D(pool_size=(1, 1), dim_ordering=dim_ordering)(x)
-        pathway4 = Conv2D(branch4[0], (1, 1),
-                          subsample=subsample,
-                          activation=activation,
-                          padding=border_mode,
-                          W_regularizer=W_regularizer,
-                          b_regularizer=b_regularizer,
-                          bias=False,
-                          dim_ordering=dim_ordering)(pathway4)
-
-        return concatenate([pathway1, pathway2, pathway3, pathway4], axis=concat_axis)
-
-    @staticmethod
-    def conv_layer(x, nb_filter, nb_row, nb_col, dim_ordering,
-                   subsample=(1, 1), activation='relu',
-                   border_mode='same', weight_decay=None, padding=None):
-
-        if weight_decay:
-            W_regularizer = l2(weight_decay)
-            b_regularizer = l2(weight_decay)
-        else:
-            W_regularizer = None
-            b_regularizer = None
-
-        x = Conv2D(nb_filter, (nb_row, nb_col),
-                   subsample=subsample,
-                   activation=activation,
-                   padding=border_mode,
-                   W_regularizer=W_regularizer,
-                   b_regularizer=b_regularizer,
-                   bias=False,
-                   dim_ordering=dim_ordering)(x)
-
-        if padding:
-            for _ in range(padding):
-                x = ZeroPadding2D(padding=(1, 1), dim_ordering=dim_ordering)(x)
-
-        return x
-
-    def GoogLeNet_FunctionalAPI(self, nOutput, input_shape):
-
-        if len(input_shape) == 3:
-            input_shape = tuple([input_shape[2]] + input_shape[0:2])
-        else:
-            input_shape = tuple(input_shape)
-
-        # Define image input layer
-        img_input = Input(shape=input_shape, name='input_data')
-        CONCAT_AXIS = 1
-        NB_CLASS = nOutput  # number of classes (default 1000)
-        DROPOUT = 0.4
-        # Theano - 'th' (channels, width, height)
-        # Tensorflow - 'tf' (width, height, channels)
-        DIM_ORDERING = 'th'
-        pool_name = 'last_max_pool'  # name of the last max-pooling layer
-
-        x = self.conv_layer(img_input, nb_col=7, nb_filter=64, subsample=(2, 2),
-                            nb_row=7, dim_ordering=DIM_ORDERING, padding=1)
-        x = MaxPooling2D(strides=(2, 2), pool_size=(3, 3), dim_ordering=DIM_ORDERING)(x)
-
-        x = self.conv_layer(x, nb_col=1, nb_filter=64,
-                            nb_row=1, dim_ordering=DIM_ORDERING)
-        x = self.conv_layer(x, nb_col=3, nb_filter=192,
-                            nb_row=3, dim_ordering=DIM_ORDERING, padding=1)
-        x = MaxPooling2D(strides=(2, 2), pool_size=(3, 3), dim_ordering=DIM_ORDERING)(x)
-
-        x = self.inception_module(x, params=[(64,), (96, 128), (16, 32), (32,)],
-                                  dim_ordering=DIM_ORDERING, concat_axis=CONCAT_AXIS)
-        x = self.inception_module(x, params=[(128,), (128, 192), (32, 96), (64,)],
-                                  dim_ordering=DIM_ORDERING, concat_axis=CONCAT_AXIS)
-
-        x = ZeroPadding2D(padding=(2, 2), dim_ordering=DIM_ORDERING)(x)
-        x = MaxPooling2D(strides=(2, 2), pool_size=(3, 3), dim_ordering=DIM_ORDERING)(x)
-
-        x = self.inception_module(x, params=[(192,), (96, 208), (16, 48), (64,)],
-                                  dim_ordering=DIM_ORDERING, concat_axis=CONCAT_AXIS)
-        # AUX 1 - Branch HERE
-        x = self.inception_module(x, params=[(160,), (112, 224), (24, 64), (64,)],
-                                  dim_ordering=DIM_ORDERING, concat_axis=CONCAT_AXIS)
-        x = self.inception_module(x, params=[(128,), (128, 256), (24, 64), (64,)],
-                                  dim_ordering=DIM_ORDERING, concat_axis=CONCAT_AXIS)
-        x = self.inception_module(x, params=[(112,), (144, 288), (32, 64), (64,)],
-                                  dim_ordering=DIM_ORDERING, concat_axis=CONCAT_AXIS)
-        # AUX 2 - Branch HERE
-        x = self.inception_module(x, params=[(256,), (160, 320), (32, 128), (128,)],
-                                  dim_ordering=DIM_ORDERING, concat_axis=CONCAT_AXIS)
-        x = MaxPooling2D(strides=(2, 2), pool_size=(3, 3), dim_ordering=DIM_ORDERING, name=pool_name)(x)
-
-        x = self.inception_module(x, params=[(256,), (160, 320), (32, 128), (128,)],
-                                  dim_ordering=DIM_ORDERING, concat_axis=CONCAT_AXIS)
-        x = self.inception_module(x, params=[(384,), (192, 384), (48, 128), (128,)],
-                                  dim_ordering=DIM_ORDERING, concat_axis=CONCAT_AXIS)
-        x = AveragePooling2D(strides=(1, 1), dim_ordering=DIM_ORDERING)(x)
-        x = Flatten()(x)
-        x = Dropout(DROPOUT)(x)
-        # x = Dense(output_dim=NB_CLASS,
-        #          activation='linear')(x)
-        x = Dense(output_dim=NB_CLASS,
-                  activation='softmax', name='output')(x)
-
-        self.model = Model(inputs=[img_input], outputs=[x])
-
-    def Union_Layer(self, nOutput, input_shape):
-        """
-        Network with just a dropout and a softmax layers which is intended to serve as the final layer for an ECOC model
-        """
-        if len(input_shape) == 3:
-            input_shape = tuple([input_shape[2]] + input_shape[0:2])
-        else:
-            input_shape = tuple(input_shape)
-
-        self.model = Sequential()
-        self.model.add(Flatten(input_shape=input_shape))
-        self.model.add(Dropout(0.5))
-        self.model.add(Dense(nOutput, activation='softmax'))
-
-    def add_One_vs_One_Inception(self, input_layer, input_shape, id_branch, nOutput=2, activation='softmax'):
-        """
-        Builds a simple One_vs_One_Inception network with 2 inception layers on the top of the current model
-        (useful for ECOC_loss models).
-        """
-
-        # Inception Ea
-        out_Ea = self.__addInception('inceptionEa_' + str(id_branch), input_layer, 4, 2, 8, 2, 2, 2)
-        # Inception Eb
-        out_Eb = self.__addInception('inceptionEb_' + str(id_branch), out_Ea, 2, 2, 4, 2, 1, 1)
-        # Average Pooling    pool_size=(7,7)
-        self.model.add_node(AveragePooling2D(pool_size=input_shape[1:], strides=(1, 1)),
-                            name='ave_pool/ECOC_' + str(id_branch), input=out_Eb)
-        # Softmax
-        self.model.add_node(Flatten(),
-                            name='fc_OnevsOne_' + str(id_branch) + '/flatten', input='ave_pool/ECOC_' + str(id_branch))
-        self.model.add_node(Dropout(0.5),
-                            name='fc_OnevsOne_' + str(id_branch) + '/drop',
-                            input='fc_OnevsOne_' + str(id_branch) + '/flatten')
-        output_name = 'fc_OnevsOne_' + str(id_branch)
-        self.model.add_node(Dense(nOutput, activation=activation),
-                            name=output_name, input='fc_OnevsOne_' + str(id_branch) + '/drop')
-
-        return output_name
-
-    def add_One_vs_One_Inception_Functional(self, input_layer, input_shape, id_branch, nOutput=2, activation='softmax'):
-        """
-        Builds a simple One_vs_One_Inception network with 2 inception layers on the top of the current model
-         (useful for ECOC_loss models).
-        """
-
-        in_node = self.model.get_layer(input_layer).output
-
-        # Inception Ea
-        [out_Ea, out_Ea_name] = self.__addInception_Functional('inceptionEa_' + str(id_branch), in_node, 4, 2, 8, 2, 2,
-                                                               2)
-        # Inception Eb
-        [out_Eb, out_Eb_name] = self.__addInception_Functional('inceptionEb_' + str(id_branch), out_Ea, 2, 2, 4, 2, 1,
-                                                               1)
-        # Average Pooling    pool_size=(7,7)
-        x = AveragePooling2D(pool_size=input_shape, strides=(1, 1), name='ave_pool/ECOC_' + str(id_branch))(out_Eb)
-
-        # Softmax
-        output_name = 'fc_OnevsOne_' + str(id_branch)
-        x = Flatten(name='fc_OnevsOne_' + str(id_branch) + '/flatten')(x)
-        x = Dropout(0.5, name='fc_OnevsOne_' + str(id_branch) + '/drop')(x)
-        out_node = Dense(nOutput, activation=activation, name=output_name)(x)
-
-        return out_node
-
-    @staticmethod
-    def add_One_vs_One_3x3_Functional(input_layer, input_shape, id_branch, nkernels, nOutput=2, activation='softmax'):
-
-        # 3x3 convolution
-        out_3x3 = Conv2D(nkernels, (3, 3), name='3x3/ecoc_' + str(id_branch), activation='relu')(input_layer)
-
-        # Average Pooling    pool_size=(7,7)
-        x = AveragePooling2D(pool_size=input_shape, strides=(1, 1), name='ave_pool/ecoc_' + str(id_branch))(out_3x3)
-
-        # Softmax
-        output_name = 'fc_OnevsOne_' + str(id_branch) + '/out'
-        x = Flatten(name='fc_OnevsOne_' + str(id_branch) + '/flatten')(x)
-        x = Dropout(0.5, name='fc_OnevsOne_' + str(id_branch) + '/drop')(x)
-        out_node = Dense(nOutput, activation=activation, name=output_name)(x)
-
-        return out_node
-
-    @staticmethod
-    def add_One_vs_One_3x3_double_Functional(input_layer, input_shape, id_branch, nOutput=2, activation='softmax'):
-
-        # 3x3 convolution
-        out_3x3 = Conv2D(64, (3, 3), name='3x3_1/ecoc_' + str(id_branch), activation='relu')(input_layer)
-
-        # Max Pooling
-        x = MaxPooling2D(strides=(2, 2), pool_size=(2, 2), name='max_pool/ecoc_' + str(id_branch))(out_3x3)
-
-        # 3x3 convolution
-        x = Conv2D(32, (3, 3), name='3x3_2/ecoc_' + str(id_branch), activation='relu')(x)
-
-        # Softmax
-        output_name = 'fc_OnevsOne_' + str(id_branch) + '/out'
-        x = Flatten(name='fc_OnevsOne_' + str(id_branch) + '/flatten')(x)
-        x = Dropout(0.5, name='fc_OnevsOne_' + str(id_branch) + '/drop')(x)
-        out_node = Dense(nOutput, activation=activation, name=output_name)(x)
-
-        return out_node
-
-    def add_One_vs_One_Inception_v2(self, input_layer, input_shape, id_branch, nOutput=2, activation='softmax'):
-        """
-            Builds a simple One_vs_One_Inception_v2 network with 2 inception layers on the top of the current model
-            (useful for ECOC_loss models).
-        """
-
-        # Inception Ea
-        out_Ea = self.__addInception('inceptionEa_' + str(id_branch), input_layer, 16, 8, 32, 8, 8, 8)
-        # Inception Eb
-        out_Eb = self.__addInception('inceptionEb_' + str(id_branch), out_Ea, 8, 8, 16, 8, 4, 4)
-        # Average Pooling    pool_size=(7,7)
-        self.model.add_node(AveragePooling2D(pool_size=input_shape[1:], strides=(1, 1)),
-                            name='ave_pool/ECOC_' + str(id_branch), input=out_Eb)
-        # Softmax
-        self.model.add_node(Flatten(),
-                            name='fc_OnevsOne_' + str(id_branch) + '/flatten', input='ave_pool/ECOC_' + str(id_branch))
-        self.model.add_node(Dropout(0.5),
-                            name='fc_OnevsOne_' + str(id_branch) + '/drop',
-                            input='fc_OnevsOne_' + str(id_branch) + '/flatten')
-        output_name = 'fc_OnevsOne_' + str(id_branch)
-        self.model.add_node(Dense(nOutput, activation=activation),
-                            name=output_name, input='fc_OnevsOne_' + str(id_branch) + '/drop')
-
-        return output_name
-
-    def __addInception(self, name, input_layer, kernels_1x1, kernels_3x3_reduce, kernels_3x3, kernels_5x5_reduce,
-                       kernels_5x5, kernels_pool_projection):
-        """
-            Adds an inception module to the model.
-
-            :param name: string identifier of the inception layer
-            :param input_layer: identifier of the layer that will serve as an input to the built inception module
-            :param kernels_1x1: number of kernels of size 1x1                                      (1st branch)
-            :param kernels_3x3_reduce: number of kernels of size 1x1 before the 3x3 layer          (2nd branch)
-            :param kernels_3x3: number of kernels of size 3x3                                      (2nd branch)
-            :param kernels_5x5_reduce: number of kernels of size 1x1 before the 5x5 layer          (3rd branch)
-            :param kernels_5x5: number of kernels of size 5x5                                      (3rd branch)
-            :param kernels_pool_projection: number of kernels of size 1x1 after the 3x3 pooling    (4th branch)
-        """
-        # Branch 1
-        self.model.add_node(Conv2D(kernels_1x1, (1, 1)), name=name + '/1x1', input=input_layer)
-        self.model.add_node(Activation('relu'), name=name + '/relu_1x1', input=name + '/1x1')
-
-        # Branch 2
-        self.model.add_node(Conv2D(kernels_3x3_reduce, (1, 1)), name=name + '/3x3_reduce', input=input_layer)
-        self.model.add_node(Activation('relu'), name=name + '/relu_3x3_reduce', input=name + '/3x3_reduce')
-        self.model.add_node(ZeroPadding2D((1, 1)), name=name + '/3x3_zeropadding', input=name + '/relu_3x3_reduce')
-        self.model.add_node(Conv2D(kernels_3x3, (3, 3)), name=name + '/3x3', input=name + '/3x3_zeropadding')
-        self.model.add_node(Activation('relu'), name=name + '/relu_3x3', input=name + '/3x3')
-
-        # Branch 3
-        self.model.add_node(Conv2D(kernels_5x5_reduce, (1, 1)), name=name + '/5x5_reduce', input=input_layer)
-        self.model.add_node(Activation('relu'), name=name + '/relu_5x5_reduce', input=name + '/5x5_reduce')
-        self.model.add_node(ZeroPadding2D((2, 2)), name=name + '/5x5_zeropadding', input=name + '/relu_5x5_reduce')
-        self.model.add_node(Conv2D(kernels_5x5, (5, 5)), name=name + '/5x5', input=name + '/5x5_zeropadding')
-        self.model.add_node(Activation('relu'), name=name + '/relu_5x5', input=name + '/5x5')
-
-        # Branch 4
-        self.model.add_node(ZeroPadding2D((1, 1)), name=name + '/pool_zeropadding', input=input_layer)
-        self.model.add_node(MaxPooling2D((3, 3), strides=(1, 1)), name=name + '/pool', input=name + '/pool_zeropadding')
-        self.model.add_node(Conv2D(kernels_pool_projection, (1, 1)), name=name + '/pool_proj', input=name + '/pool')
-        self.model.add_node(Activation('relu'), name=name + '/relu_pool_proj', input=name + '/pool_proj')
-
-        # Concatenate
-        inputs_list = [name + '/relu_1x1', name + '/relu_3x3', name + '/relu_5x5', name + '/relu_pool_proj']
-        out_name = name + '/concat'
-        self.model.add_node(Activation('linear'), name=out_name, inputs=inputs_list, concat_axis=1)
-
-        return out_name
-
-    @staticmethod
-    def __addInception_Functional(name, input_layer, kernels_1x1, kernels_3x3_reduce, kernels_3x3,
-                                  kernels_5x5_reduce, kernels_5x5, kernels_pool_projection):
-        """
-            Adds an inception module to the model.
-
-            :param name: string identifier of the inception layer
-            :param input_layer: identifier of the layer that will serve as an input to the built inception module
-            :param kernels_1x1: number of kernels of size 1x1                                      (1st branch)
-            :param kernels_3x3_reduce: number of kernels of size 1x1 before the 3x3 layer          (2nd branch)
-            :param kernels_3x3: number of kernels of size 3x3                                      (2nd branch)
-            :param kernels_5x5_reduce: number of kernels of size 1x1 before the 5x5 layer          (3rd branch)
-            :param kernels_5x5: number of kernels of size 5x5                                      (3rd branch)
-            :param kernels_pool_projection: number of kernels of size 1x1 after the 3x3 pooling    (4th branch)
-        """
-        # Branch 1
-        x_b1 = Conv2D(kernels_1x1, (1, 1), name=name + '/1x1', activation='relu')(input_layer)
-
-        # Branch 2
-        x_b2 = Conv2D(kernels_3x3_reduce, (1, 1), name=name + '/3x3_reduce', activation='relu')(input_layer)
-        x_b2 = ZeroPadding2D((1, 1), name=name + '/3x3_zeropadding')(x_b2)
-        x_b2 = Conv2D(kernels_3x3, (3, 3), name=name + '/3x3', activation='relu')(x_b2)
-
-        # Branch 3
-        x_b3 = Conv2D(kernels_5x5_reduce, (1, 1), name=name + '/5x5_reduce', activation='relu')(input_layer)
-        x_b3 = ZeroPadding2D((2, 2), name=name + '/5x5_zeropadding')(x_b3)
-        x_b3 = Conv2D(kernels_5x5, (5, 5), name=name + '/5x5', activation='relu')(x_b3)
-
-        # Branch 4
-        x_b4 = ZeroPadding2D((1, 1), name=name + '/pool_zeropadding')(input_layer)
-        x_b4 = MaxPooling2D((3, 3), strides=(1, 1), name=name + '/pool')(x_b4)
-        x_b4 = Conv2D(kernels_pool_projection, (1, 1), name=name + '/pool_proj', activation='relu')(x_b4)
-
-        # Concatenate
-        out_name = name + '/concat'
-        out_node = concatenate([x_b1, x_b2, x_b3, x_b4], axis=1, name=out_name)
-
-        return [out_node, out_name]
-
-    def add_One_vs_One_Merge(self, inputs_list, nOutput, activation='softmax'):
-
-        self.model.add_node(Flatten(), name='ecoc_loss', inputs=inputs_list,
-                            merge_mode='concat')  # join outputs from OneVsOne classifiers
-        self.model.add_node(Dropout(0.5), name='final_loss/drop', input='ecoc_loss')
-        self.model.add_node(Dense(nOutput, activation=activation), name='final_loss',
-                            input='final_loss/drop')  # apply final joint prediction
-
-        # Outputs
-        self.model.add_output(name='ecoc_loss/output', input='ecoc_loss')
-        self.model.add_output(name='final_loss/output', input='final_loss')
-
-        return ['ecoc_loss/output', 'final_loss/output']
-
-    def add_One_vs_One_Merge_Functional(self, inputs_list, nOutput, activation='softmax'):
-
-        # join outputs from OneVsOne classifiers
-        ecoc_loss_name = 'ecoc_loss'
-        final_loss_name = 'final_loss/out'
-        ecoc_loss = concatenate(inputs_list, name=ecoc_loss_name, axis=1)
-        drop = Dropout(0.5, name='final_loss/drop')(ecoc_loss)
-        # apply final joint prediction
-        final_loss = Dense(nOutput, activation=activation, name=final_loss_name)(drop)
-
-        in_node = self.model.layers[0].name
-        in_node = self.model.get_layer(in_node).output
-        self.model = Model(inputs=[in_node], outputs=[ecoc_loss, final_loss])
-
-        return [ecoc_loss_name, final_loss_name]
-
-    ##############################
-    #       DENSE NETS
-    ##############################
-
-    def add_dense_block(self, input_layer, nb_layers, k, drop, init_weights, name=None):
-        """
-        Adds a Dense Block for the transition down path.
-
-        # References
-            Jegou S, Drozdzal M, Vazquez D, Romero A, Bengio Y.
-            The One Hundred Layers Tiramisu: Fully Convolutional DenseNets for Semantic Segmentation.
-            arXiv preprint arXiv:1611.09326. 2016 Nov 28.
-
-        :param name:
-        :param input_layer: input layer to the dense block.
-        :param nb_layers: number of dense layers included in the dense block (see self.add_dense_layer()
-                          for information about the internal layers).
-        :param k: growth rate. Number of additional feature maps learned at each layer.
-        :param drop: dropout rate.
-        :param init_weights: weights initialization function
-        :return: output layer of the dense block
-        """
-        if K.image_dim_ordering() == 'th':
-            axis = 1
-        elif K.image_dim_ordering() == 'tf':
-            axis = -1
-        else:
-            raise ValueError('Invalid dim_ordering:', K.image_dim_ordering)
-
-        list_outputs = []
-        prev_layer = input_layer
-        for n in range(nb_layers):
-            if name is not None:
-                name_dense = name + '_' + str(n)
-                name_merge = 'merge' + name + '_' + str(n)
-            else:
-                name_dense = None
-                name_merge = None
-
-            # Insert dense layer
-            new_layer = self.add_dense_layer(prev_layer, k, drop, init_weights, name=name_dense)
-            list_outputs.append(new_layer)
-            # Merge with previous layer
-            prev_layer = concatenate([new_layer, prev_layer], axis=axis, name=name_merge)
-
-        return concatenate(list_outputs, axis=axis, name=name_merge)
-
-    @staticmethod
-    def add_dense_layer(input_layer, k, drop, init_weights, name=None):
-        """
-        Adds a Dense Layer inside a Dense Block, which is composed of BN, ReLU, Conv and Dropout
-
-        # References
-            Jegou S, Drozdzal M, Vazquez D, Romero A, Bengio Y.
-            The One Hundred Layers Tiramisu: Fully Convolutional DenseNets for Semantic Segmentation.
-            arXiv preprint arXiv:1611.09326. 2016 Nov 28.
-
-        :param name:
-        :param input_layer: input layer to the dense block.
-        :param k: growth rate. Number of additional feature maps learned at each layer.
-        :param drop: dropout rate.
-        :param init_weights: weights initialization function
-        :return: output layer
-        """
-
-        if name is not None:
-            name_batch = 'batchnormalization' + name
-            name_activ = 'activation' + name
-            name_conv = 'convolution2d' + name
-            name_drop = 'dropout' + name
-        else:
-            name_batch = None
-            name_activ = None
-            name_conv = None
-            name_drop = None
-
-        out_layer = BatchNormalization(mode=2, axis=1, name=name_batch)(input_layer)
-        out_layer = Activation('relu', name=name_activ)(out_layer)
-        out_layer = Conv2D(k, (3, 3), kernel_initializer=init_weights, padding='same', name=name_conv)(out_layer)
-        if drop > 0.0:
-            out_layer = Dropout(drop, name=name_drop)(out_layer)
-        return out_layer
-
-    def add_transitiondown_block(self, input_layer,
-                                 nb_filters_conv, pool_size, init_weights,
-                                 nb_layers, growth, drop):
-        """
-        Adds a Transition Down Block. Consisting of BN, ReLU, Conv and Dropout, Pooling, Dense Block.
-
-        # References
-            Jegou S, Drozdzal M, Vazquez D, Romero A, Bengio Y.
-            The One Hundred Layers Tiramisu: Fully Convolutional DenseNets for Semantic Segmentation.
-            arXiv preprint arXiv:1611.09326. 2016 Nov 28.
-
-        # Input layers parameters
-        :param input_layer: input layer.
-
-        # Convolutional layer parameters
-        :param nb_filters_conv: number of convolutional filters to learn.
-        :param pool_size: size of the max pooling operation (2 in reference paper)
-        :param init_weights: weights initialization function
-
-        # Dense Block parameters
-        :param nb_layers: number of dense layers included in the dense block (see self.add_dense_layer()
-                          for information about the internal layers).
-        :param growth: growth rate. Number of additional feature maps learned at each layer.
-        :param drop: dropout rate.
-
-        :return: [output layer, skip connection name]
-        """
-        if K.image_dim_ordering() == 'th':
-            axis = 1
-        elif K.image_dim_ordering() == 'tf':
-            axis = -1
-        else:
-            raise ValueError('Invalid dim_ordering:', K.image_dim_ordering)
-
-        # Dense Block
-        x_dense = self.add_dense_block(input_layer, nb_layers, growth, drop,
-                                       init_weights)  # (growth*nb_layers) feature maps added
-
-        # Concatenate and skip connection recovery for upsampling path
-        skip = concatenate([input_layer, x_dense], axis=axis)
-
-        # Transition Down
-        x_out = BatchNormalization(mode=2, axis=1)(skip)
-        x_out = Activation('relu')(x_out)
-        x_out = Conv2D(nb_filters_conv, (1, 1), kernel_initializer=init_weights, padding='same')(x_out)
-        if drop > 0.0:
-            x_out = Dropout(drop)(x_out)
-        x_out = MaxPooling2D(pool_size=(pool_size, pool_size))(x_out)
-
-        return [x_out, skip]
-
-    def add_transitionup_block(self, input_layer, skip_conn,
-                               nb_filters_deconv, init_weights,
-                               nb_layers, growth, drop, name=None):
-        """
-        Adds a Transition Up Block. Consisting of Deconv, Skip Connection, Dense Block.
-
-        # References
-            Jegou S, Drozdzal M, Vazquez D, Romero A, Bengio Y.
-            The One Hundred Layers Tiramisu: Fully Convolutional DenseNets for Semantic Segmentation.
-            arXiv preprint arXiv:1611.09326. 2016 Nov 28.
-
-        # Input layers parameters
-        :param name:
-        :param input_layer: input layer.
-        :param skip_conn: list of layers to be used as skip connections.
-
-        # Deconvolutional layer parameters
-        :param nb_filters_deconv: number of deconvolutional filters to learn.
-        :param init_weights: weights initialization function
-
-        # Dense Block parameters
-        :param nb_layers: number of dense layers included in the dense block (see self.add_dense_layer()
-                          for information about the internal layers).
-        :param growth: growth rate. Number of additional feature maps learned at each layer.
-        :param drop: dropout rate.
-
-        :return: output layer
-        """
-
-        if K.image_dim_ordering() == 'th':
-            axis = 1
-        elif K.image_dim_ordering() == 'tf':
-            axis = -1
-        else:
-            raise ValueError('Invalid dim_ordering:', K.image_dim_ordering)
-
-        input_layer = Conv2DTranspose(nb_filters_deconv, (3, 3),
-                                      strides=(2, 2),
-                                      kernel_initializer=init_weights, padding='valid')(input_layer)
-
-        # Skip connection concatenation
-        input_layer = Concatenate(axis=axis, cropping=[None, None, 'center', 'center'])([skip_conn, input_layer])
-
-        # Dense Block
-        input_layer = self.add_dense_block(input_layer, nb_layers, growth, drop, init_weights,
-                                           name=name)  # (growth*nb_layers) feature maps added
-        return input_layer
-
-    @staticmethod
-    def Empty(nOutput, input_layer):
-        """
-            Creates an empty Model_Wrapper (can be externally defined)
-        """
-        pass
 
     # ------------------------------------------------------- #
     #       SAVE/LOAD

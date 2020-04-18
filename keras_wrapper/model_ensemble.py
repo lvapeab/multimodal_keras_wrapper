@@ -14,9 +14,11 @@ logging.basicConfig(level=logging.INFO, format='[%(asctime)s] %(message)s', date
 logger = logging.getLogger(__name__)
 try:
     import cupy as cp
+
     cupy = True
 except:
     import numpy as cp
+
     logger.info('<<< Cupy not available. Using numpy. >>>')
     cupy = False
 
@@ -40,7 +42,8 @@ class BeamSearchEnsemble:
         self.return_alphas = params_prediction.get('coverage_penalty', False) or params_prediction.get('pos_unk', False)
         self.n_best = n_best
         self.verbose = verbose
-        self.model_weights = np.asarray([1. / len(models)] * len(models), dtype='float32') if (model_weights is None) or (model_weights == []) else np.asarray(model_weights, dtype='float32')
+        self.model_weights = np.asarray([1. / len(models)] * len(models), dtype='float32') if \
+            (model_weights is None) or (model_weights == []) else np.asarray(model_weights, dtype='float32')
         self._dynamic_display = ((hasattr(sys.stdout, 'isatty') and sys.stdout.isatty()) or 'ipykernel' in sys.modules)
         if self.verbose > 0:
             logger.info('<<< "Optimized search: %s >>>' % str(self.optimized_search))
@@ -84,7 +87,6 @@ class BeamSearchEnsemble:
     def predict_cond(self, X, states_below, params, ii):
         """
         Call the prediction functions of all models, according to their inputs
-        :param models: List of models in the ensemble
         :param X: Input data
         :param states_below: Previously generated words (in case of conditional models)
         :param params: Model parameters
@@ -93,23 +95,16 @@ class BeamSearchEnsemble:
         """
 
         probs_list = []
-        prev_outs_list = []
-        alphas_list = []
         for i, model in list(enumerate(self.models)):
             probs_list.append(model.predict_cond(X, states_below, params, ii))
 
         probs = sum(probs_list[i] * self.model_weights[i] for i in range(len(self.models)))
-
-        if self.return_alphas:
-            alphas = np.asarray(sum(alphas_list[i] for i in range(len(self.models))))
-        else:
-            alphas = None
         return probs
 
     def predictBeamSearchNet(self):
         """
         Approximates by beam search the best predictions of the net on the dataset splits chosen.
-        Params from config that affect the sarch process:
+        Params from config that affect the search process:
             * max_batch_size: size of the maximum batch loaded into memory
             * n_parallel_loaders: number of parallel data batch loaders
             * normalization: apply data normalization on images/features or not (only if using images/features as input)
@@ -212,16 +207,13 @@ class BeamSearchEnsemble:
                 references = []
                 sources_sampling = []
             best_samples = []
-            if params['pos_unk']:
-                best_alphas = []
-                sources = []
-
-            total_cost = 0
+            best_scores = np.array([])
+            best_alphas = []
+            sources = []
             sampled = 0
             start_time = time.time()
             eta = -1
-            if self.n_best:
-                n_best_list = []
+            n_best_list = []
             for _ in range(num_iterations):
                 data = next(data_gen)
                 X = dict()
@@ -265,9 +257,9 @@ class BeamSearchEnsemble:
 
                     if params['length_penalty'] or params['coverage_penalty']:
                         if params['length_penalty']:
-                            length_penalties = [((5 + len(sample)) ** params['length_norm_factor'] / (5 + 1) ** params['length_norm_factor'])
-                                                # this 5 is a magic number by Google...
-                                                for sample in samples]
+                            # this 5 is a magic number by Google...
+                            length_penalties = [((5 + len(sample)) ** params['length_norm_factor'] /
+                                                 (5 + 1) ** params['length_norm_factor']) for sample in samples]
                         else:
                             length_penalties = [1.0 for _ in samples]
 
@@ -286,7 +278,8 @@ class BeamSearchEnsemble:
                                 coverage_penalties.append(params['coverage_norm_factor'] * cp_penalty)
                         else:
                             coverage_penalties = [0.0 for _ in samples]
-                        scores = [co / lp + cov_p for co, lp, cov_p in zip(scores, length_penalties, coverage_penalties)]
+                        scores = [co / lp + cov_p for co, lp, cov_p in
+                                  zip(scores, length_penalties, coverage_penalties)]
 
                     elif params['normalize_probs']:
                         counts = [len(sample) ** params['alpha_factor'] for sample in samples]
@@ -301,33 +294,32 @@ class BeamSearchEnsemble:
                         else:
                             n_best_alphas = [None] * len(n_best_indices)
                         n_best_list.append([n_best_samples, n_best_scores, n_best_alphas])
-                    best_score = np.argmin(scores)
-                    best_sample = samples[best_score]
+
+                    best_score_idx = np.argmin(scores)
+                    best_sample = samples[best_score_idx]
                     best_samples.append(best_sample)
+                    best_scores = np.concatenate([best_scores, [scores[best_score_idx]]])
                     if params['pos_unk']:
-                        best_alphas.append(np.asarray(alphas[best_score]))
-                    total_cost += scores[best_score]
+                        best_alphas.append(np.asarray(alphas[best_score_idx]))
+
                     eta = (n_samples - sampled) * (time.time() - start_time) / sampled
                     if params['n_samples'] > 0:
                         for output_id in params['model_outputs']:
                             references.append(Y[output_id][i])
 
-            sys.stdout.write('Total cost of the translations: %f \t '
-                             'Average cost of the translations: %f\n' % (total_cost, total_cost / n_samples))
+            sys.stdout.write('\n Total cost: %f \t'
+                             ' Average cost: %f\n' % (float(np.sum(best_scores, axis=None)),
+                                                      float(np.average(best_scores, axis=None))))
             sys.stdout.write('The sampling took: %f secs (Speed: %f sec/sample)\n' %
                              ((time.time() - start_time), (time.time() - start_time) / n_samples))
-
             sys.stdout.flush()
-            if self.n_best:
-                if params['pos_unk']:
-                    predictions[s] = (np.asarray(best_samples), np.asarray(best_alphas), sources), n_best_list
-                else:
-                    predictions[s] = np.asarray(best_samples), n_best_list
-            else:
-                if params['pos_unk']:
-                    predictions[s] = (np.asarray(best_samples), np.asarray(best_alphas), sources)
-                else:
-                    predictions[s] = np.asarray(best_samples)
+            predictions[s] = {
+                'samples': np.asarray(best_samples),
+                'alphas': np.asarray(best_alphas),
+                'sources': sources,
+                'costs': best_scores,
+                'n_best': n_best_list
+            }
 
         if params['n_samples'] < 1:
             return predictions
@@ -393,8 +385,10 @@ class BeamSearchEnsemble:
 
         if params['length_penalty'] or params['coverage_penalty']:
             if params['length_penalty']:
-                length_penalties = [((5 + len(sample)) ** params['length_norm_factor'] / (5 + 1) ** params['length_norm_factor'])  # this 5 is a magic number by Google...
-                                    for sample in samples]
+                length_penalties = [
+                    ((5 + len(sample)) ** params['length_norm_factor'] / (5 + 1) ** params['length_norm_factor'])
+                    # this 5 is a magic number by Google...
+                    for sample in samples]
             else:
                 length_penalties = [1.0 for _ in samples]
 
@@ -652,7 +646,8 @@ class BeamSearchEnsemble:
 
                     if params['length_penalty'] or params['coverage_penalty']:
                         if params['length_penalty']:
-                            length_penalty = ((5 + len(sample)) ** params['length_norm_factor'] / (5 + 1) ** params['length_norm_factor'])  # this 5 is a magic number by Google...
+                            length_penalty = ((5 + len(sample)) ** params['length_norm_factor'] / (5 + 1) ** params[
+                                'length_norm_factor'])  # this 5 is a magic number by Google...
                         else:
                             length_penalty = 1.0
 
@@ -773,7 +768,8 @@ class BeamSearchEnsemble:
 
             if params['length_penalty'] or params['coverage_penalty']:
                 if params['length_penalty']:
-                    length_penalty = ((5 + len(sample)) ** params['length_norm_factor'] / (5 + 1) ** params['length_norm_factor'])  # this 5 is a magic number by Google...
+                    length_penalty = ((5 + len(sample)) ** params['length_norm_factor'] / (5 + 1) ** params[
+                        'length_norm_factor'])  # this 5 is a magic number by Google...
                 else:
                     length_penalty = 1.0
 
@@ -1038,6 +1034,7 @@ class PredictEnsemble:
         self._dynamic_display = ((hasattr(sys.stdout, 'isatty') and
                                   sys.stdout.isatty()) or
                                  'ipykernel' in sys.modules)
+
     # PREDICTION FUNCTIONS: Functions for making prediction on input samples
 
     @staticmethod

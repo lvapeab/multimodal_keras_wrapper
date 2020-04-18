@@ -1,14 +1,19 @@
 # -*- coding: utf-8 -*-
 from __future__ import print_function
-
 import copy
+import logging
+import numpy as np
+import os
+import sys
 import warnings
 
 from keras import backend as K
 from keras.callbacks import Callback as KerasCallback
+from six import iteritems
 
 from keras_wrapper.extra import evaluation
-from keras_wrapper.extra.read_write import *
+from keras_wrapper.extra.read_write import create_dir_if_not_exists, list2file, list2vqa, numpy2file, \
+    listoflists2file, numpy2imgs
 from keras_wrapper.utils import decode_predictions_one_hot, \
     decode_predictions_beam_search, decode_predictions, \
     decode_multilabel
@@ -75,6 +80,7 @@ class EvalPerformance(KerasCallback):
     """
     Evaluates a model each N epochs or updates
     """
+
     def __init__(self,
                  model,
                  dataset,
@@ -339,7 +345,8 @@ class EvalPerformance(KerasCallback):
                                      }
 
                 params_prediction.update(checkDefaultParamsBeamSearch(self.extra_vars))
-                predictions_all = self.model_to_eval.predictBeamSearchNet(self.ds, params_prediction)[s]
+                predictions_all = self.model_to_eval.predictBeamSearchNet(self.ds,
+                                                                          params_prediction)[s]
             else:
                 orig_size = self.extra_vars.get('eval_orig_size', False)
                 params_prediction = {'batch_size': self.batch_size,
@@ -359,7 +366,8 @@ class EvalPerformance(KerasCallback):
                     postprocess_fun = [self.ds.resize_semantic_output,
                                        self.extra_vars[s]['eval_orig_size_id']]
                 predictions_all = \
-                    self.model_to_eval.predictNet(self.ds, params_prediction,
+                    self.model_to_eval.predictNet(self.ds,
+                                                  params_prediction,
                                                   postprocess_fun=postprocess_fun)[s]
 
             # Single-output model
@@ -383,66 +391,64 @@ class EvalPerformance(KerasCallback):
                     self.index2word_x):
 
                 predictions = predictions_all[gt_pos]
-
+                prediction_costs = None
                 if self.verbose > 0:
                     print('')
-                    logger.info('Prediction output ' + str(gt_pos) + ': ' + str(
-                        gt_id) + ' (' + str(type_out) + ')')
+                    logger.info('Prediction output ' + str(gt_pos) + ': ' + str(gt_id) + ' (' + str(type_out) + ')')
                 # Postprocess outputs of type text
                 if type_out == 'text':
+                    samples = predictions['samples']
+                    prediction_costs = predictions['costs']
+                    alphas = None
+                    sources = None
                     if params_prediction.get('pos_unk', False):
-                        samples = predictions[0]
-                        alphas = predictions[1]
-
+                        alphas = predictions['alphas']
                         if eval('self.ds.loaded_raw_' + s + '[0]'):
-                            sources = predictions[2]
+                            sources = predictions['sources']
                         else:
                             sources = []
-                            for preds in predictions[2]:
+                            for preds in predictions['sources']:
                                 for src in preds[self.input_text_id]:
                                     sources.append(src)
                             sources = decode_predictions_beam_search(sources,
                                                                      index2word_x,
                                                                      pad_sequences=True,
                                                                      verbose=self.verbose)
-                        heuristic = self.extra_vars['heuristic']
-                    else:
-                        samples = predictions
-                        alphas = None
-                        heuristic = None
-                        sources = None
                     if self.out_pred_idx is not None:
                         samples = samples[self.out_pred_idx]
 
                     # Convert predictions into sentences
                     if self.beam_search:
-                        predictions = decode_predictions_beam_search(samples,
-                                                                     index2word_y,
-                                                                     glossary=self.extra_vars.get('glossary', None),
-                                                                     alphas=alphas,
-                                                                     x_text=sources,
-                                                                     heuristic=heuristic,
-                                                                     mapping=self.extra_vars.get('mapping', None),
-                                                                     verbose=self.verbose)
+                        decoded_predictions = decode_predictions_beam_search(samples,
+                                                                             index2word_y,
+                                                                             glossary=self.extra_vars.get('glossary',
+                                                                                                          None),
+                                                                             alphas=alphas,
+                                                                             x_text=sources,
+                                                                             heuristic=self.extra_vars.get('heuristic',
+                                                                                                           0),
+                                                                             mapping=self.extra_vars.get('mapping',
+                                                                                                         None),
+                                                                             verbose=self.verbose)
                     else:
                         probs = predictions
-                        predictions = decode_predictions(predictions,
-                                                         1,
-                                                         # always set temperature to 1
-                                                         index2word_y,
-                                                         self.sampling_type,
-                                                         verbose=self.verbose)
+                        decoded_predictions = decode_predictions(predictions,
+                                                                 1,
+                                                                 # always set temperature to 1
+                                                                 index2word_y,
+                                                                 self.sampling_type,
+                                                                 verbose=self.verbose)
                     # Apply detokenization function if needed
                     if self.extra_vars.get('apply_detokenization', False):
-                        predictions = list(map(self.extra_vars['detokenize_f'], predictions))
+                        decoded_predictions = list(map(self.extra_vars['detokenize_f'], decoded_predictions))
 
                 # Postprocess outputs of type binary
                 elif type_out == 'binary':
-                    predictions = decode_multilabel(predictions,
-                                                    index2word_y,
-                                                    min_val=self.min_pred_multilabel[
-                                                        gt_pos],
-                                                    verbose=self.verbose)
+                    decoded_predictions = decode_multilabel(predictions,
+                                                            index2word_y,
+                                                            min_val=self.min_pred_multilabel[
+                                                                gt_pos],
+                                                            verbose=self.verbose)
 
                     # Prepare references
                     # exec ("y_raw = self.ds.Y_" + s + "[gt_id]")
@@ -485,9 +491,11 @@ class EvalPerformance(KerasCallback):
                 # Store predictions
                 if self.write_samples:
                     # Store result
-                    filepath = self.save_path + '/' + s + '_' + counter_name + '_' + str(epoch) + '_output_' + str(gt_pos) + '.pred'  # results file
+                    filepath = os.path.join(
+                        self.save_path,
+                        s + '_' + counter_name + '_' + str(epoch) + '_output_' + str(gt_pos) + '.pred')  # results file
                     if write_type == 'list':
-                        list2file(filepath, predictions)
+                        list2file(filepath, decoded_predictions)
                     elif write_type == 'vqa':
                         try:
                             # exec ('refs = self.ds.Y_' + s + '[gt_id]')
@@ -498,21 +506,21 @@ class EvalPerformance(KerasCallback):
                         extra_data_plot = {'reference': refs,
                                            'probs': probs,
                                            'vocab': index2word_y}
-                        list2vqa(filepath, predictions,
+                        list2vqa(filepath, decoded_predictions,
                                  self.extra_vars[gt_pos][s]['question_ids'],
                                  extra=extra_data_plot)
                     elif write_type == 'listoflists':
-                        listoflists2file(filepath, predictions)
+                        listoflists2file(filepath, decoded_predictions)
                     elif write_type == 'numpy':
-                        numpy2file(filepath, predictions)
+                        numpy2file(filepath, decoded_predictions)
                     elif write_type == '3DLabels':
                         raise NotImplementedError(
                             'Write 3DLabels function is not implemented')
                     elif write_type == '3DSemanticLabel':
-                        folder_path = self.save_path + '/' + s + '_' + counter_name + '_' + str(
-                            epoch)  # results folder
+                        folder_path = os.path.join(self.save_path,
+                                                   s + '_' + counter_name + '_' + str(epoch))
                         numpy2imgs(folder_path,
-                                   predictions,
+                                   decoded_predictions,
                                    eval('self.ds.X_' + s + '["' + self.input_id + '"]'),
                                    self.ds)
                     else:
@@ -522,7 +530,8 @@ class EvalPerformance(KerasCallback):
                 for metric in these_metrics:
                     if self.verbose > 0:
                         logger.info('Evaluating on metric ' + metric)
-                    filepath = self.save_path + '/' + s + '.' + metric  # results file
+                    filepath = os.path.join(self.save_path,
+                                            s + '.' + metric)
 
                     if s == 'train':
                         logger.info(
@@ -531,11 +540,15 @@ class EvalPerformance(KerasCallback):
 
                     # Evaluate on the chosen metric
                     metrics = evaluation.select[metric](
-                        pred_list=predictions,
+                        pred_list=decoded_predictions,
                         verbose=self.verbose,
                         extra_vars=self.extra_vars[gt_pos],
-                        split=s)
-
+                        split=s,
+                        costs=prediction_costs
+                    )
+                    self.model_to_eval.log_tensorboard(metrics,
+                                                       epoch,
+                                                       split=s)
                     # Print results to file and store in model log
                     with open(filepath, 'a') as f:
                         header = counter_name + ','
@@ -613,6 +626,7 @@ class StoreModel(KerasCallback):
     """
     Saves a model into disk.
     """
+
     def __init__(self, model, fun, epochs_for_save, verbose=0):
         """
             model - model to save
@@ -649,6 +663,7 @@ class Sample(KerasCallback):
     """
     Applies the sampling function of a model.
     """
+
     def __init__(self,
                  model,
                  dataset,
@@ -679,7 +694,6 @@ class Sample(KerasCallback):
             :param model: model to evaluate
             :param dataset: instance of the class Dataset in keras_wrapper.dataset
             :param gt_id: identifier in the Dataset instance of the output data about to evaluate
-            :param metric_name: name of the performance metric
             :param set_name: name of the set split that will be evaluated
             :param n_samples: number of samples predicted during sampling
             :param each_n_updates: sampling each this number of epochs
@@ -785,35 +799,32 @@ class Sample(KerasCallback):
                                                          pad_sequences=True,
                                                          verbose=self.verbose)
             if s in predictions:
-                if params_prediction['pos_unk']:
-                    samples = predictions[s][0]
-                    alphas = predictions[s][1]
-                    heuristic = self.extra_vars['heuristic']
-                else:
-                    samples = predictions[s]
-                    alphas = None
-                    heuristic = None
-
-                predictions = predictions[s]
                 if self.is_text:
+                    samples = predictions[s]['samples']
+                    alphas = predictions[s]['alphas'] if params_prediction['pos_unk'] else None
+
                     if self.out_pred_idx is not None:
                         samples = samples[self.out_pred_idx]
+
                     # Convert predictions into sentences
                     if self.beam_search:
-                        predictions = decode_predictions_beam_search(samples,
-                                                                     self.index2word_y,
-                                                                     glossary=self.extra_vars.get('glossary', None),
-                                                                     alphas=alphas,
-                                                                     x_text=sources,
-                                                                     heuristic=heuristic,
-                                                                     mapping=self.extra_vars.get('mapping', None),
-                                                                     verbose=self.verbose)
+                        decoded_predictions = decode_predictions_beam_search(
+                            samples,
+                            self.index2word_y,
+                            glossary=self.extra_vars.get('glossary', None),
+                            alphas=alphas,
+                            x_text=sources,
+                            heuristic=self.extra_vars.get('heuristic', 0),
+                            mapping=self.extra_vars.get('mapping', None),
+                            verbose=self.verbose)
                     else:
-                        predictions = decode_predictions(samples,
-                                                         1,
-                                                         self.index2word_y,
-                                                         self.sampling_type,
-                                                         verbose=self.verbose)
+                        decoded_predictions = decode_predictions(
+                            samples,
+                            self.temperature,
+                            self.index2word_y,
+                            self.sampling_type,
+                            verbose=self.verbose)
+
                     truths = decode_predictions_one_hot(truths, self.index2word_y,
                                                         verbose=self.verbose)
 
@@ -821,13 +832,13 @@ class Sample(KerasCallback):
                     if self.extra_vars.get('apply_detokenization', False):
                         if self.print_sources:
                             sources = list(map(self.extra_vars['detokenize_f'], sources))
-                        predictions = list(map(self.extra_vars['detokenize_f'], predictions))
+                        decoded_predictions = list(map(self.extra_vars['detokenize_f'], decoded_predictions))
                         truths = list(map(self.extra_vars['detokenize_f'], truths))
 
                 # Write samples
                 if self.print_sources:
                     # Write samples
-                    for i, (source, sample, truth) in list(enumerate(zip(sources, predictions, truths))):
+                    for i, (source, sample, truth) in list(enumerate(zip(sources, decoded_predictions, truths))):
                         if sys.version_info.major == 2:
                             source = str(source.encode('utf-8'))
                             sample = str(sample.encode('utf-8'))
@@ -837,7 +848,7 @@ class Sample(KerasCallback):
                         print("Reference  (%d): %s" % (i, truth))
                         print("")
                 else:
-                    for i, (sample, truth) in list(enumerate(zip(predictions, truths))):
+                    for i, (sample, truth) in list(enumerate(zip(decoded_predictions, truths))):
                         if sys.version_info.major == 2:
                             sample = str(sample.encode('utf-8'))
                             truth = str(truth.encode('utf-8'))
@@ -949,7 +960,8 @@ class EarlyStopping(KerasCallback):
         current_score = self.model_to_eval.getLog(self.check_split, self.metric_check)[-1]
         # Get last metric value from logs
         if current_score is None:
-            warnings.warn('The chosen metric ' + str(self.metric_check) + ' does not exist; the EarlyStopping callback works only with a valid metric.')
+            warnings.warn('The chosen metric ' + str(
+                self.metric_check) + ' does not exist; the EarlyStopping callback works only with a valid metric.')
             return
         if self.want_to_minimize:
             current_score = -current_score
@@ -959,7 +971,10 @@ class EarlyStopping(KerasCallback):
             self.best_score = current_score
             self.wait = 0
             if self.verbose > 0:
-                logger.info('---current best %s %s: %.3f' % (self.check_split, self.metric_check, current_score if not self.want_to_minimize else -current_score))
+                logger.info('---current best %s %s: %.3f' % (self.check_split,
+                                                             self.metric_check,
+                                                             current_score if not self.want_to_minimize
+                                                             else -current_score))
 
         # Stop training if performance has not improved for self.patience epochs
         elif self.patience > 0:
@@ -973,7 +988,7 @@ class EarlyStopping(KerasCallback):
                             str(counter_name), self.best_epoch,
                             self.best_score if not self.want_to_minimize else -self.best_score))
                 self.model.stop_training = True
-                exit(1)
+                return
 
 
 class LearningRateReducer(KerasCallback):
@@ -988,6 +1003,7 @@ class LearningRateReducer(KerasCallback):
             lr = initial_lr * min(current_step**exp_base, current_step * half_life ** warmup_exp)
 
     """
+
     def __init__(self,
                  initial_lr=1.,
                  reduce_rate=0.99,

@@ -1,5 +1,34 @@
 import pytest
-from keras_wrapper.extra.evaluation import *
+import numpy as np
+from keras_wrapper.extra.evaluation import get_sacrebleu_score, get_coco_score, multilabel_metrics, get_perplexity
+
+
+def test_get_sacrebleu_score():
+    pred_list = ['Prediction 1 X W Z', 'Prediction 2 X W Z', 'Prediction 3 X W Z']
+
+    for tokenize_hypothesis in {True, False}:
+        for tokenize_references in {True, False}:
+            for apply_detokenization in {True, False}:
+                extra_vars = {'val': {'references': {0: ['Prediction 1 X W Z', 'Prediction 5'],
+                                                     1: ['Prediction 2 X W Z', 'X Y Z'],
+                                                     2: ['Prediction 3 X W Z', 'Prediction 5']},
+                                      },
+
+                              'test': {'references': {0: ['Prediction 2 X W Z'],
+                                                      1: ['Prediction 3 X W Z'],
+                                                      2: ['Prediction 1 X W Z']}
+                                       },
+                              'tokenize_hypothesis': tokenize_hypothesis,
+                              'tokenize_references': tokenize_references,
+                              'tokenize_references': apply_detokenization,
+                              'tokenize_f': lambda x: x,
+                              'detokenize_f': lambda x: x,
+                              }
+                val_scores = get_sacrebleu_score(pred_list, 0, extra_vars, 'val')
+                assert np.allclose(val_scores['Bleu_4'], 100.0, atol=1e6)
+
+                test_scores = get_sacrebleu_score(pred_list, 0, extra_vars, 'test')
+                assert np.allclose(test_scores['Bleu_4'], 0., atol=1e6)
 
 
 def test_get_coco_score():
@@ -64,10 +93,13 @@ def test_multiclass_metrics():
 
 
 def test_compute_perplexity():
-    y_pred = [[1, 2, 3, 3, 4], [1, 1, 2, 3, 4]]
-    y_true = [[1, 2, 3, 3, 4], [1, 1, 2, 3, 4]]
-    ppl = compute_perplexity(y_pred, y_true, 0, 'val')
-    assert np.allclose(ppl, 0.47, atol=1e6)
+    costs = [1., 1., 1.]
+    ppl = get_perplexity(costs=costs)
+    assert np.allclose(ppl['Perplexity'], np.e, atol=1e6)
+
+    costs = [0., 0., 0.]
+    ppl = get_perplexity(costs=costs)
+    assert np.allclose(ppl['Perplexity'], 0., atol=1e6)
 
 
 def test_semantic_segmentation_accuracy():

@@ -1,26 +1,13 @@
 # Multimodal Keras Wrapper
 Wrapper for Keras with support to easy multimodal data and models loading and handling.
 
-[![Build Status](https://travis-ci.org/lvapeab/multimodal_keras_wrapper.svg?branch=master)](https://travis-ci.org/lvapeab/multimodal_keras_wrapper) [![Requirements Status](https://requires.io/github/lvapeab/multimodal_keras_wrapper/requirements.svg?branch=master)](https://requires.io/github/lvapeab/multimodal_keras_wrapper/requirements/?branch=master) ![Compatibility](https://img.shields.io/badge/Python-2.7%2F3.7-blue.svg) [![license](https://img.shields.io/github/license/mashape/apistatus.svg)](https://github.com/lvapeab/multimodal_keras_wrapper/blob/master/LICENSE)
+[![PyPI version](https://badge.fury.io/py/multimodal-keras-wrapper.svg)](https://badge.fury.io/py/multimodal-keras-wrapper) [![Build Status](https://travis-ci.org/lvapeab/multimodal_keras_wrapper.svg?branch=master)](https://travis-ci.org/lvapeab/multimodal_keras_wrapper) [![Requirements Status](https://requires.io/github/lvapeab/multimodal_keras_wrapper/requirements.svg?branch=master)](https://requires.io/github/lvapeab/multimodal_keras_wrapper/requirements/?branch=master) ![Compatibility](https://img.shields.io/badge/Python-3.6-blue.svg) [![license](https://img.shields.io/github/license/mashape/apistatus.svg)](https://github.com/lvapeab/multimodal_keras_wrapper/blob/master/LICENSE)
 
 ## Documentation
 
 You can access the library documentation page at [marcbs.github.io/multimodal_keras_wrapper/](http://marcbs.github.io/multimodal_keras_wrapper/)
 
 Some code examples are available in demo.ipynb and test.py. Additionally, in the section Projects you can see some practical examples of projects using this library.
-
-
-## Dependencies
-
-The following dependencies are required for using this library:
-
- - Keras - [custom fork](https://github.com/MarcBS/keras) or [original version](https://github.com/fchollet/keras)
- - [Coco-caption evaluation package](https://github.com/lvapeab/coco-caption/tree/master/pycocoevalcap/) (Only required to perform evaluation). This package requires `java` (version 1.8.0 or newer).
- - Those specified in the `requirements.txt` file.   
- - The `cupy` package can be used for performing numpy-like operations in the GPU. If not available, the package will fall back to numpy.
- 
-Only when using NMS for certain localization utilities:
- - [cython](https://pypi.python.org/pypi/Cython/0.25.2) >= 0.23.4
 
 
 ## Installation
@@ -44,6 +31,18 @@ export PYTHONPATH=$PYTHONPATH:/path/to/multimodal_keras_wrapper
 ```
 pip install -r requirements.txt
 ```
+
+
+## Additional dependencies
+
+The following additional dependencies are required to fully exploit this library:
+
+ - Keras - [custom fork](https://github.com/MarcBS/keras) or [original version](https://github.com/fchollet/keras)
+ - The `cupy` package can be used for performing numpy-like operations in the GPU. If not available, the package will fall back to numpy.
+ - [Coco-caption evaluation package](https://github.com/lvapeab/coco-caption/tree/master/pycocoevalcap/) (Only required to perform COCO evaluation). This package requires `java` (version 1.8.0 or newer).
+ 
+Only when using NMS for certain localization utilities:
+ - [cython](https://pypi.python.org/pypi/Cython/0.25.2) >= 0.23.4
 
 
 ## Projects

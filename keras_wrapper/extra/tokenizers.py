@@ -2,6 +2,21 @@
 import re
 import sys
 
+__all__ = [
+    'tokenize_basic',
+    'tokenize_aggressive',
+    'tokenize_icann',
+    'tokenize_montreal',
+    'tokenize_soft',
+    'tokenize_none',
+    'tokenize_none_char',
+    'tokenize_CNN_sentence',
+    'tokenize_questions',
+    'detokenize_none',
+    'detokenize_bpe',
+    'detokenize_none_char',
+]
+
 
 def tokenize_basic(caption, lowercase=True):
     """
@@ -145,16 +160,16 @@ def tokenize_soft(caption, lowercase=True):
     :return: Tokenized version of caption
     """
     tokenized = re.sub(u'[\n\t]+', u'', caption.strip())
-    tokenized = re.sub(u'[\.]+', u' . ', tokenized)
+    tokenized = re.sub(u'[.]+', u' . ', tokenized)
     tokenized = re.sub(u'[,]+', u' , ', tokenized)
     tokenized = re.sub(u'[!]+', u' ! ', tokenized)
     tokenized = re.sub(u'[?]+', u' ? ', tokenized)
-    tokenized = re.sub(u'[\{]+', u' { ', tokenized)
-    tokenized = re.sub(u'[\}]+', u' } ', tokenized)
-    tokenized = re.sub(u'[\(]+', u' ( ', tokenized)
-    tokenized = re.sub(u'[\)]+', u' ) ', tokenized)
-    tokenized = re.sub(u'[\[]+', u' [ ', tokenized)
-    tokenized = re.sub(u'[\]]+', u' ] ', tokenized)
+    tokenized = re.sub(u'[{]+', u' { ', tokenized)
+    tokenized = re.sub(u'[}]+', u' } ', tokenized)
+    tokenized = re.sub(u'[(]+', u' ( ', tokenized)
+    tokenized = re.sub(u'[)]+', u' ) ', tokenized)
+    tokenized = re.sub(u'[[]+', u' [ ', tokenized)
+    tokenized = re.sub(u'[]]+', u' ] ', tokenized)
     tokenized = re.sub(u'["]+', u' " ', tokenized)
     tokenized = re.sub(u'[\']+', u" ' ", tokenized)
     tokenized = re.sub(u'[ ]+', u' ', tokenized)
@@ -213,7 +228,7 @@ def tokenize_CNN_sentence(caption):
     :param caption: String to tokenize
     :return: Tokenized version of caption
     """
-    tokenized = re.sub(r"[^A-Za-z0-9(),!?\'\`]", " ", caption)
+    tokenized = re.sub(r"[^A-Za-z0-9(),!?\'`]", " ", caption)
     tokenized = re.sub(r"\'s", " \'s", tokenized)
     tokenized = re.sub(r"\'ve", " \'ve", tokenized)
     tokenized = re.sub(r"n\'t", " n\'t", tokenized)
@@ -283,7 +298,7 @@ def tokenize_questions(caption):
                     "youre": "you’re", "youve": "you’ve"}
     punct = [';', r"/", '[', ']', '"', '{', '}', '(', ')', '=', '+', '\\',
              '_', '-', '>', '<', '@', '`', ',', '?', '!']
-    commaStrip = re.compile("(\d)(\,)(\d)")
+    commaStrip = re.compile("(\d)(,)(\d)")
     periodStrip = re.compile("(?!<=\d)(\.)(?!\d)")
     manualMap = {'none': '0', 'zero': '0', 'one': '1', 'two': '2', 'three': '3', 'four': '4', 'five': '5',
                  'six': '6', 'seven': '7', 'eight': '8', 'nine': '9', 'ten': '10'}
@@ -327,19 +342,6 @@ def tokenize_questions(caption):
     resAns = processDigitArticle(resAns)
 
     return resAns
-
-
-def tokenize_bpe(BPE, caption):
-    """
-    Applies BPE segmentation (https://github.com/rsennrich/subword-nmt)
-    :param caption: Caption to detokenize.
-    :return: Encoded version of caption.
-    """
-    if isinstance(caption, str) and sys.version_info < (3, 0):
-        caption = caption.decode('utf-8')
-    tokenized = re.sub(u'[\n\t]+', u'', caption)
-    tokenized = BPE.segment(tokenized).strip()
-    return tokenized
 
 
 def detokenize_none(caption):
