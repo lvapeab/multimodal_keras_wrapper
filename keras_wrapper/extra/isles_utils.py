@@ -28,10 +28,10 @@ def longest_common_substring(s1, s2):
     :param s2:
     :return:
     """
-    m = [[0] * (1 + len(s2)) for _ in xrange(1 + len(s1))]
+    m = [[0] * (1 + len(s2)) for _ in range(1 + len(s1))]
     longest, x_longest, y_longest = 0, 0, 0
-    for x in xrange(1, 1 + len(s1)):
-        for y in xrange(1, 1 + len(s2)):
+    for x in range(1, 1 + len(s1)):
+        for y in range(1, 1 + len(s2)):
             if s1[x - 1] == s2[y - 1]:
                 m[x][y] = m[x - 1][y - 1] + 1
                 if m[x][y] > longest:
@@ -139,8 +139,9 @@ def subfinder(pattern, mylist):
     :param mylist:
     :return:
     """
+    pattern_ = list(pattern)
     for start_pos in range(len(mylist)):
-        if mylist[start_pos] == pattern[0] and mylist[start_pos:start_pos + len(pattern)] == pattern:
+        if len(pattern_) > 0 and mylist[start_pos] == pattern_[0] and mylist[start_pos:start_pos + len(pattern_)] == pattern_:
             return pattern, start_pos
     return [], -1
 
@@ -164,7 +165,8 @@ def compute_mouse_movements(isles, prev_isles, last_checked_index):
     :return: Number of mouse actions performed
     """
     mouse_actions_sentence = 0
-    for index, words in isles:
+    for index, words_ in isles:
+        words = list(words_)
         # For each isle, we check that it is not included in the previous isles
         if index > last_checked_index:  # We don't select validated prefixes
             if not any(map(lambda x: words[0] in x, prev_isles)):
