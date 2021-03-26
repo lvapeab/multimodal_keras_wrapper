@@ -29,12 +29,12 @@ from keras_wrapper.utils import one_hot_2_indices, decode_predictions, decode_pr
 from keras_wrapper.search import beam_search
 
 # These imports must be kept to ensure backwards compatibility
-from keras_wrapper.saving import saveModel, loadModel, updateModel, transferWeights
+from keras_wrapper.saving import saveModel, loadModel, updateModel, transferWeights  # noqa
 
 # General setup of libraries
 try:
     import cupy as cp
-except:
+except ModuleNotFoundError:
     import numpy as cp
 
     logger.info('<<< Cupy not available. Using numpy. >>>')
@@ -194,9 +194,7 @@ class Model_Wrapper(object):
                 if d not in self.__data_types:
                     self.__data_types.append(d)
 
-        self._dynamic_display = ((hasattr(sys.stdout, 'isatty') and
-                                  sys.stdout.isatty()) or
-                                 'ipykernel' in sys.modules)
+        self._dynamic_display = ((hasattr(sys.stdout, 'isatty') and sys.stdout.isatty()) or 'ipykernel' in sys.modules)
 
         self.__modes = ['train',
                         'val',
@@ -1528,8 +1526,9 @@ class Model_Wrapper(object):
                         if params['length_penalty'] or params['coverage_penalty']:
                             if params['length_penalty']:
                                 # this 5 is a magic number by Google...
-                                length_penalties = [((5 + len(sample)) ** params['length_norm_factor'] /
-                                                     (5 + 1) ** params['length_norm_factor']) for sample in samples]
+                                length_penalties = \
+                                    [((5 + len(sample)) ** params['length_norm_factor'] /
+                                      (5 + 1) ** params['length_norm_factor']) for sample in samples]
                             else:
                                 length_penalties = [1.0 for _ in samples]
 

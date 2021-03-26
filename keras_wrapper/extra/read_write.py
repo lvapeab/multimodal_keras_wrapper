@@ -5,8 +5,8 @@ Reads from input file or writes to the output file.
 Author: Mateusz Malinowski
 Email: mmalinow@mpi-inf.mpg.de
 
-Modified by: Marc Bola\~nos
-             \'Alvaro Peris
+Modified by: Marc Bolaños
+             Alvaro Peris
 """
 from __future__ import print_function
 from six import iteritems
@@ -16,22 +16,11 @@ import codecs
 import numpy as np
 import tables
 import sys
+import _pickle as pk
 import logging
 
 logging.basicConfig(level=logging.INFO, format='[%(asctime)s] %(message)s', datefmt='%d/%m/%Y %H:%M:%S')
 logger = logging.getLogger(__name__)
-
-if sys.version_info.major == 3:
-    import _pickle as pk
-
-    unicode_fn = str
-else:
-    import cPickle as pk
-
-    unicode_fn = unicode
-
-
-# Helpers
 
 
 def encode_list(mylist):
@@ -40,8 +29,7 @@ def encode_list(mylist):
     :param mylist:
     :return:
     """
-    return [l.decode('utf-8') if isinstance(l, str) else unicode(l) for l in
-            mylist] if sys.version_info.major == 2 else [str(l) for l in mylist]
+    return [str(elem) for elem in mylist]
 
 
 def dirac(pred,
@@ -228,17 +216,13 @@ def nbest2file(filepath,
     :return:
     """
     newlist = []
-    for l in mylist:
-        for l2 in l:
+    for elem in mylist:
+        for l2 in elem:
             a = []
             for l3 in l2:
                 if isinstance(l3, list):
                     l3 = l3[0]
-                if sys.version_info.major == 2:
-                    if isinstance(l3, str):
-                        a.append(l3.decode('utf-8') + u' ' + separator)
-                    else:
-                        a.append(unicode(l3) + u' ' + separator)
+                    a.append(str(l3) + u' ' + separator)
                 else:
                     a.append(str(l3) + ' ' + separator)
             a = ' '.join(a + [' '])
@@ -365,8 +349,8 @@ def print_qa(questions,
         a_gt_original = answers_gt_original[k]
         a_p = answers_pred[k]
         score += dirac(a_p, a_gt_original)
-        if isinstance(q[0], unicode_fn):
-            tmp = unicode_fn('question: {0}\nanswer: {1}\nanswer_original: {2}\nprediction: {3}\n')
+        if isinstance(q[0], str):
+            tmp = str('question: {0}\nanswer: {1}\nanswer_original: {2}\nprediction: {3}\n')
         else:
             tmp = 'question: {0}\nanswer: {1}\nanswer_original: {2}\nprediction: {3}\n'
         output.append(tmp.format(q, a_gt, a_gt_original, a_p))

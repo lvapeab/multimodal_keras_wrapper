@@ -19,7 +19,7 @@ from collections import Counter, defaultdict
 from operator import add
 import numpy as np
 from keras_wrapper.extra.tokenizers import *
-from keras_wrapper.saving import loadDataset, saveDataset  # Backwards compatibility
+from keras_wrapper.saving import loadDataset, saveDataset  # noqa # Backwards compatibility
 from .utils import bbox, to_categorical
 from .utils import MultiprocessQueue
 import multiprocessing
@@ -1139,9 +1139,8 @@ class Dataset(object):
             raise Exception('An input with id "' + id + '" is already loaded into the Dataset.')
 
         if type not in self.__accepted_types_inputs:
-            raise NotImplementedError('The input type "' + type +
-                                      '" is not implemented. '
-                                      'The list of valid types are the following: ' + str(self.__accepted_types_inputs))
+            raise NotImplementedError(f'The input type "{type}" is not implemented. '
+                                      f'The list of valid types are the following: {self.__accepted_types_inputs}')
 
         if self.types_inputs.get(set_name) is None:
             self.types_inputs[set_name] = [type]
@@ -3900,16 +3899,16 @@ class Dataset(object):
             init = 0
             batch = 200
             for current_image in range(batch, self.len_train, batch):
-                I = self.getX('train', init, current_image, meanSubstraction=False)[self.ids_inputs.index(data_id)]
-                for im in I:
+                images = self.getX('train', init, current_image, meanSubstraction=False)[self.ids_inputs.index(data_id)]
+                for im in images:
                     I_sum += im
                 if not self.silence:
                     sys.stdout.write('\r')
                     sys.stdout.write("Processed %d/%d images..." % (current_image, self.len_train))
                     sys.stdout.flush()
                 init = current_image
-            I = self.getX('train', init, self.len_train, meanSubstraction=False)[self.ids_inputs.index(data_id)]
-            for im in I:
+            images = self.getX('train', init, self.len_train, meanSubstraction=False)[self.ids_inputs.index(data_id)]
+            for im in images:
                 I_sum += im
             if not self.silence:
                 sys.stdout.write('\r')
@@ -4009,13 +4008,13 @@ class Dataset(object):
         type_imgs = np.float64
         if len(self.img_size[data_id]) == 3:
             if keras.backend.image_data_format() == 'channels_first':
-                I = np.zeros([nImages] + [self.img_size_crop[data_id][2]] + self.img_size_crop[data_id][0:2],
-                             dtype=type_imgs)
+                images = np.zeros([nImages] + [self.img_size_crop[data_id][2]] + self.img_size_crop[data_id][0:2],
+                                  dtype=type_imgs)
             else:
-                I = np.zeros([nImages] + self.img_size_crop[data_id][0:2] + [self.img_size_crop[data_id][2]],
-                             dtype=type_imgs)
+                images = np.zeros([nImages] + self.img_size_crop[data_id][0:2] + [self.img_size_crop[data_id][2]],
+                                  dtype=type_imgs)
         else:
-            I = np.zeros([nImages] + self.img_size_crop[data_id], dtype=type_imgs)
+            images = np.zeros([nImages] + self.img_size_crop[data_id], dtype=type_imgs)
 
         # Process each image separately
         for i in range(nImages):
@@ -4211,9 +4210,9 @@ class Dataset(object):
             if meanSubstraction:  # remove mean
                 im = im - train_mean
 
-            I[i] = im
+            images[i] = im
 
-        return I
+        return images
 
     def getResizeImageWODistorsion(self,
                                    image,

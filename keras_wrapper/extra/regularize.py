@@ -62,8 +62,8 @@ def Regularize(layer,
         shared_layers_list.append(Lambda(L2_norm, name=name + '_L2_norm'))
 
     # Apply all the previously built shared layers
-    for l in shared_layers_list:
-        layer = l(layer)
+    for layer_fn in shared_layers_list:
+        layer = layer_fn(layer)
     result = layer
 
     # Return result or shared layers too

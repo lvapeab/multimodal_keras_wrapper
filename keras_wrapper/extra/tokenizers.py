@@ -237,9 +237,9 @@ def tokenize_CNN_sentence(caption):
     tokenized = re.sub(r"\'ll", " \'ll", tokenized)
     tokenized = re.sub(r",", " , ", tokenized)
     tokenized = re.sub(r"!", " ! ", tokenized)
-    tokenized = re.sub(r"\(", " \( ", tokenized)
-    tokenized = re.sub(r"\)", " \) ", tokenized)
-    tokenized = re.sub(r"\?", " \? ", tokenized)
+    tokenized = re.sub(r"\(", " \( ", tokenized)  # noqa
+    tokenized = re.sub(r"\)", " \) ", tokenized)  # noqa
+    tokenized = re.sub(r"\?", " \? ", tokenized)  # noqa
     tokenized = re.sub(r"\s{2,}", " ", tokenized)
     return tokenized.strip().lower()
 
@@ -298,8 +298,8 @@ def tokenize_questions(caption):
                     "youre": "you’re", "youve": "you’ve"}
     punct = [';', r"/", '[', ']', '"', '{', '}', '(', ')', '=', '+', '\\',
              '_', '-', '>', '<', '@', '`', ',', '?', '!']
-    commaStrip = re.compile("(\d)(,)(\d)")
-    periodStrip = re.compile("(?!<=\d)(\.)(?!\d)")
+    commaStrip = re.compile("(\d)(,)(\d)")  # noqa
+    periodStrip = re.compile("(?!<=\d)(\.)(?!\d)")  # noqa
     manualMap = {'none': '0', 'zero': '0', 'one': '1', 'two': '2', 'three': '3', 'four': '4', 'five': '5',
                  'six': '6', 'seven': '7', 'eight': '8', 'nine': '9', 'ten': '10'}
     articles = ['a', 'an', 'the']

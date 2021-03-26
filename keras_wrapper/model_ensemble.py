@@ -14,11 +14,9 @@ logging.basicConfig(level=logging.INFO, format='[%(asctime)s] %(message)s', date
 logger = logging.getLogger(__name__)
 try:
     import cupy as cp
-
     cupy = True
-except:
+except ModuleNotFoundError:
     import numpy as cp
-
     logger.info('<<< Cupy not available. Using numpy. >>>')
     cupy = False
 

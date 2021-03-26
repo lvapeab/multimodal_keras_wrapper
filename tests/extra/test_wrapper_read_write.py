@@ -1,9 +1,5 @@
 # -*- coding: utf-8 -*-
 import pytest
-import sys
-import os
-import numpy
-from six import iteritems
 from keras_wrapper.extra.read_write import *
 from keras_wrapper.utils import flatten_list_of_lists
 

@@ -391,8 +391,8 @@ def transferWeights(old_model,
             # Alert for any weight matrix not inserted to new model
             for pos_old, wo in list(enumerate(old)):
                 if pos_old not in list(mapping_weights.values()):
-                    logger.info('  Pre-trained weight matrix of layer "' + lold +
-                                '" with dimensions ' + str(wo.shape) + ' can not be inserted to new model.')
+                    logger.info(f'Pre-trained weight matrix of layer "{lold}" with dimensions '
+                                f'{wo.shape}) can not be inserted to new model.')
 
             # Alert for any weight matrix not modified
             for pos_new, wn in list(enumerate(new)):

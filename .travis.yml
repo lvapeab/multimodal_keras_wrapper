@@ -14,13 +14,13 @@ matrix:
 install:
 
   - travis_wait 30 pip install .
-  - pip install pytest pytest-cache pytest-cov pytest-forked pytest-pep8 pytest-xdist --progress-bar off
+  - pip install pytest pytest-cache pytest-cov pytest-forked flake8 pytest-xdist --progress-bar off
   - pip install -e git+https://github.com/lvapeab/coco-caption.git#egg=coco-caption --progress-bar off
 
 # command to run tests
 script:
   - if [[ "$TEST_MODE" == "PEP8" ]]; then
-      PYTHONPATH=$PWD:$PYTHONPATH pytest --pep8 -m pep8 ;
+      PYTHONPATH=$PWD:$PYTHONPATH python -m flake8 --config=./.flake8 .;
     elif [[ "$TEST_MODE" == "GENERAL" ]]; then
       PYTHONPATH=$PWD:$PYTHONPATH pytest -s tests/general/ 2>&1 ;
     elif [[ "$TEST_MODE" == "EXTRA" ]]; then

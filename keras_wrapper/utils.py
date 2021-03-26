@@ -1,8 +1,6 @@
 # -*- coding: utf-8 -*-
 import copy
-import itertools
 import sys
-import time
 from six import iteritems
 import numpy as np
 import logging
@@ -619,17 +617,17 @@ def flatten_list_of_lists(list_of_lists):
     return [item for sublist in list_of_lists for item in sublist]
 
 
-def flatten(l):
+def flatten(my_list):
     """
     Flatten a list (more general than flatten_list_of_lists, but also more inefficient
-    :param l:
+    :param my_list:
     :return:
     """
-    if not l:
-        return l
-    return flatten(l[0]) + (flatten(l[1:]) if len(l) > 1 else []) if isinstance(l,
-                                                                                list) else [
-        l]
+    if not my_list:
+        return my_list
+    return flatten(my_list[0]) + (flatten(my_list[1:]) if len(my_list) > 1 else []) if isinstance(my_list,
+                                                                                                  list) else [
+        my_list]
 
 
 def key_with_max_val(d):

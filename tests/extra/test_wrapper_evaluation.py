@@ -20,7 +20,6 @@ def test_get_sacrebleu_score():
                                        },
                               'tokenize_hypothesis': tokenize_hypothesis,
                               'tokenize_references': tokenize_references,
-                              'tokenize_references': apply_detokenization,
                               'tokenize_f': lambda x: x,
                               'detokenize_f': lambda x: x,
                               }

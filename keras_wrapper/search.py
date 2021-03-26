@@ -6,7 +6,7 @@ try:
     import cupy as cp
 
     cupy = True
-except:
+except ModuleNotFoundError:
     import numpy as cp
 
     cupy = False

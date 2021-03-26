@@ -183,7 +183,7 @@ def getBBoxesFromCAMs(CAMs, reshape_size=None, percentage_heat=0.4, size_restric
     try:
         from nms.gpu_nms import gpu_nms
         from nms.cpu_nms import cpu_nms
-    except:
+    except Exception:
         raise Exception(
             "Cython is required for running this function:\npip install cython\nRun the following command inside "
             "kernel_wrapper/extra/nms after its installation:\npython setup.py build_ext --inplace")

@@ -500,11 +500,11 @@ def semantic_segmentation_meaniou(pred_list,
     union = np.zeros(n_classes - len(discard_classes))
     ind_i = 0
 
-    for l in range(0, n_classes):
-        if not any([d == l for d in discard_classes]):
-            tp = cm[l][l]
-            fn = np.sum(cm[l]) - tp
-            fp = np.sum(cm_t[l]) - tp
+    for class_idx in range(0, n_classes):
+        if not any([d == class_idx for d in discard_classes]):
+            tp = cm[class_idx][class_idx]
+            fn = np.sum(cm[class_idx]) - tp
+            fp = np.sum(cm_t[class_idx]) - tp
             inter[ind_i] = float(tp)
             union[ind_i] = float(tp + fp + fn)
             ind_i += 1
