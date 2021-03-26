@@ -1045,7 +1045,7 @@ def build_OneVsOneECOC_Stage(n_classes_ecoc, input_shape, ds, stage1_lr=0.01,
     :return:
     """
     n_classes = len(ds.classes)
-    labels_list = [str(l) for l in range(n_classes)]
+    labels_list = [str(cl) for cl in range(n_classes)]
 
     combs = tuple(itertools.combinations(labels_list, n_classes_ecoc))
     stage = list()

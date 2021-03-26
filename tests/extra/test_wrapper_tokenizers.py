@@ -1,6 +1,5 @@
 # -*- coding: utf-8 -*-
 import pytest
-from six import iteritems
 from keras_wrapper.extra.tokenizers import *
 
 

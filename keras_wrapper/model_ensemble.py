@@ -14,11 +14,9 @@ logging.basicConfig(level=logging.INFO, format='[%(asctime)s] %(message)s', date
 logger = logging.getLogger(__name__)
 try:
     import cupy as cp
-
     cupy = True
-except:
+except ModuleNotFoundError:
     import numpy as cp
-
     logger.info('<<< Cupy not available. Using numpy. >>>')
     cupy = False
 
@@ -28,7 +26,13 @@ class BeamSearchEnsemble:
     Beam search with one or more autoreggressive models.
     """
 
-    def __init__(self, models, dataset, params_prediction, model_weights=None, n_best=False, verbose=0):
+    def __init__(self,
+                 models,
+                 dataset,
+                 params_prediction,
+                 model_weights=None,
+                 n_best=False,
+                 verbose=0):
         """
         Initialize the models, dataset and params of the method.
         :param models: Models for provide the probabilities.
@@ -49,7 +53,12 @@ class BeamSearchEnsemble:
             logger.info('<<< "Optimized search: %s >>>' % str(self.optimized_search))
 
     # PREDICTION FUNCTIONS: Functions for making prediction on input samples
-    def predict_cond_optimized(self, X, states_below, params, ii, prev_outs):
+    def predict_cond_optimized(self,
+                               X,
+                               states_below,
+                               params,
+                               ii,
+                               prev_outs):
         """
         Call the prediction functions of all models, according to their inputs
         :param X: Input data
@@ -84,7 +93,11 @@ class BeamSearchEnsemble:
         alphas = np.sum(self.model_weights[:, None, None] * alphas_list, axis=0) if self.return_alphas else None
         return probs, prev_outs_list, alphas
 
-    def predict_cond(self, X, states_below, params, ii):
+    def predict_cond(self,
+                     X,
+                     states_below,
+                     params,
+                     ii):
         """
         Call the prediction functions of all models, according to their inputs
         :param X: Input data
@@ -160,7 +173,8 @@ class BeamSearchEnsemble:
                           'attend_on_output': False,  # Set to True if the model is a Transformer-like
                           'glossary': None
                           }
-        params = checkParameters(self.params, default_params)
+        params = checkParameters(self.params,
+                                 default_params)
         predictions = dict()
         for s in params['predict_on_sets']:
             logger.info("\n <<< Predicting outputs of " + s + " set >>>")
@@ -326,7 +340,8 @@ class BeamSearchEnsemble:
         else:
             return predictions, references, sources_sampling
 
-    def sample_beam_search(self, src_sentence):
+    def sample_beam_search(self,
+                           src_sentence):
         """
 
         :param src_sentence:
@@ -377,7 +392,9 @@ class BeamSearchEnsemble:
         x = dict()
         for input_id in params['model_inputs']:
             x[input_id] = np.asarray([X[input_id]])
-        samples, scores, alphas = beam_search(self, x, params,
+        samples, scores, alphas = beam_search(self,
+                                              x,
+                                              params,
                                               null_sym=self.dataset.extra_words['<null>'],
                                               return_alphas=self.return_alphas,
                                               model_ensemble=True,
@@ -434,7 +451,11 @@ class BeamSearchEnsemble:
         else:
             return np.asarray(best_sample), scores[best_score_idx], np.asarray(best_alphas)
 
-    def score_cond_model(self, X, Y, params, null_sym=2):
+    def score_cond_model(self,
+                         X,
+                         Y,
+                         params,
+                         null_sym=2):
         """
         Beam search method for Cond models.
         (https://en.wikibooks.org/wiki/Artificial_Intelligence/Search/Heuristic_search/Beam_search)
@@ -683,7 +704,8 @@ class BeamSearchEnsemble:
             scores_dict[s] = scores
         return scores_dict
 
-    def scoreSample(self, data):
+    def scoreSample(self,
+                    data):
         """
         Approximates by beam search the best predictions of the net on the dataset splits chosen.
         Params from config that affect the sarch process:
@@ -1018,7 +1040,12 @@ class InteractiveBeamSearchSampler:
 
 
 class PredictEnsemble:
-    def __init__(self, models, dataset, params_prediction, postprocess_fun=None, verbose=0):
+    def __init__(self,
+                 models,
+                 dataset,
+                 params_prediction,
+                 postprocess_fun=None,
+                 verbose=0):
         """
 
         :param models:
@@ -1038,7 +1065,10 @@ class PredictEnsemble:
     # PREDICTION FUNCTIONS: Functions for making prediction on input samples
 
     @staticmethod
-    def predict_generator(models, data_gen, val_samples=1, max_q_size=1):
+    def predict_generator(models,
+                          data_gen,
+                          val_samples=1,
+                          max_q_size=1):
         """
         Call the prediction functions of all models, according to their inputs
         The generator should return the same kind of data as accepted by
@@ -1061,12 +1091,18 @@ class PredictEnsemble:
 
         outs_list = []
         for m in list(models):
-            outs_list.append(m.model.predict_on_batch(data_gen, val_samples, max_q_size))
+            outs_list.append(m.model.predict_on_batch(data_gen,
+                                                      val_samples,
+                                                      max_q_size))
         outs = sum(outs_list[i] for i in range(len(models))) / float(len(models))
         return outs
 
     @staticmethod
-    def predict_on_batch(models, X, in_name=None, out_name=None, expand=False):
+    def predict_on_batch(models,
+                         X,
+                         in_name=None,
+                         out_name=None,
+                         expand=False):
         """
         Applies a forward pass and returns the predicted values of all models.
 
@@ -1179,13 +1215,6 @@ class PredictEnsemble:
                                                 predict=True,
                                                 random_samples=n_samples).generator()
             # Predict on model
-            # if self.postprocess_fun is None:
-            #
-            #     out = self.predict_generator(self.models,
-            #                                  data_gen,
-            #                                  val_samples=n_samples,
-            #                                  max_q_size=params['n_parallel_loaders'])
-            #     predictions[s] = out
             processed_samples = 0
             start_time = time.time()
             while processed_samples < n_samples:

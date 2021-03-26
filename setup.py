@@ -3,7 +3,7 @@ from setuptools import setup
 from setuptools import find_packages
 
 setup(name='multimodal-keras-wrapper',
-      version='3.1.1',
+      version='3.1.7',
       description='Wrapper for Keras with support to easy multimodal data and models loading and handling.',
       author='Marc Bolaños - Alvaro Peris',
       author_email='marc.bolanos@ub.edu',
@@ -43,7 +43,7 @@ setup(name='multimodal-keras-wrapper',
       extras_require={
           'cython ': ['cython'],
           'tests': ['pytest',
-                    'pytest-pep8',
+                    'flake8',
                     'pytest-xdist',
                     'flaky',
                     'pytest-cov',

@@ -5,7 +5,8 @@ from keras.regularizers import l2
 from keras.layers.core import Dropout, Lambda
 
 
-def Regularize(layer, params,
+def Regularize(layer,
+               params,
                shared_layers=False,
                name='',
                apply_noise=True,
@@ -66,8 +67,8 @@ def Regularize(layer, params,
                                          name=name + '_L2_norm'))
 
     # Apply all the previously built shared layers
-    for l in shared_layers_list:
-        layer = l(layer)
+    for layer_fn in shared_layers_list:
+        layer = layer_fn(layer)
     result = layer
 
     # Return result or shared layers too
