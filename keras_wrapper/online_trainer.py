@@ -183,7 +183,6 @@ class OnlineTrainer:
 
             if self.verbose > 2:
                 logger.info(u'Hypothesis: %s' % hypothesis_to_write)
-        maxlen_hypothesis_reference = max(len(trans_indices), len(y[0]))
 
         # If we are working with an n-best list, we'll probably have to decode it
         if self.params_prediction['n_best_optimizer']:
@@ -323,7 +322,6 @@ class OnlineTrainer:
                                                                          self.dataset.vocabulary_len["target_text"])])
                                 sign = np.array([self.params_training['additional_training_settings'].get('tau', 1) * n_best_predictions[permutation_index_low][3]])
                                 current_permutation_train_inputs = [x, state_below_top_prob_h, top_prob_h, sign]
-                                current_permutation_train_outputs = []
 
                                 if train_inputs:
                                     for input_index in range(len(current_permutation_train_inputs)):
@@ -637,8 +635,6 @@ class OnlineTrainer:
                     pred = decode_predictions_beam_search([n_best_pred],
                                                           self.index2word_y,
                                                           alphas=[n_best_alpha],
-                                                          x_text=sources,
-                                                          heuristic=heuristic,
                                                           mapping=self.mapping,
                                                           pad_sequences=True,
                                                           verbose=0)

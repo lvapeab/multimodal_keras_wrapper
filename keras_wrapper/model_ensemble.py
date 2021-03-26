@@ -898,7 +898,6 @@ class InteractiveBeamSearchSampler:
         """
 
         probs_list = []
-        prev_outs_list = []
         alphas_list = []
         for i, model in list(enumerate(self.models)):
             probs_list.append(model.predict_cond(X, states_below, params, ii))
@@ -909,7 +908,7 @@ class InteractiveBeamSearchSampler:
             alphas = np.asarray(sum(alphas_list[i] for i in range(len(self.models))))
         else:
             alphas = None
-        return probs
+        return probs, alphas
 
     def sample_beam_search_interactive(self, src_sentence,
                                        fixed_words=None,
